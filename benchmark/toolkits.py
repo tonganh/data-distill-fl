@@ -67,6 +67,9 @@ class BasicTaskGen:
     def __init__(self, benchmark, dist_id, skewness, rawdata_path, seed=0):
         self.benchmark = benchmark
         self.rootpath = './fedtask'
+        if not os.path.exists(self.rootpath):
+            os.mkdir(self.rootpath)
+
         self.rawdata_path = rawdata_path
         self.dist_id = dist_id
         self.dist_name = self._TYPE_DIST[dist_id]
