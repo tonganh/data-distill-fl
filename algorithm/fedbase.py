@@ -5,6 +5,7 @@ from multiprocessing import Pool as ThreadPool
 from main import logger
 import os
 import utils.fflow as flw
+from tqdm import tqdm
 
 class BasicServer():
     def __init__(self, option, model, clients, test_data = None):
@@ -17,6 +18,7 @@ class BasicServer():
         self.num_threads = option['num_threads']
         # clients settings
         self.clients = clients
+        # print(self.clients)
         self.num_clients = len(self.clients)
         self.client_vols = [c.datavol for c in self.clients]
         self.data_vol = sum(self.client_vols)
@@ -25,6 +27,7 @@ class BasicServer():
         # hyper-parameters during training process
         self.num_rounds = option['num_rounds']
         self.decay_rate = option['learning_rate_decay']
+        self.num_clients = option['num_clients']
         self.clients_per_round = max(int(self.num_clients * option['proportion']), 1)
         self.lr_scheduler_type = option['lr_scheduler']
         self.current_round = -1
@@ -68,9 +71,12 @@ class BasicServer():
             t: the number of current round
         """
         # sample clients: MD sampling as default but with replacement=False
+        # print("Iterating")
         self.selected_clients = self.sample()
+        # print("Done sampling")
         # training
         models, train_losses = self.communicate(self.selected_clients)
+        # print("Done a training step")
         # check whether all the clients have dropped out, because the dropped clients will be deleted from self.selected_clients
         if not self.selected_clients: return
         # aggregate: pk = 1/K as default where K=len(selected_clients)
@@ -89,11 +95,14 @@ class BasicServer():
         packages_received_from_clients = []
         if self.num_threads <= 1:
             # computing iteratively
-            for client_id in selected_clients:
+            print("Computing iteratively")
+            for client_id in tqdm(selected_clients):
                 response_from_client_id = self.communicate_with(client_id)
                 packages_received_from_clients.append(response_from_client_id)
+    
         else:
             # computing in parallel
+            print("Computing in parallel")
             pool = ThreadPool(min(self.num_threads, len(selected_clients)))
             packages_received_from_clients = pool.map(self.communicate_with, selected_clients)
             pool.close()
@@ -113,9 +122,11 @@ class BasicServer():
         """
         # package the necessary information
         svr_pkg = self.pack(client_id)
+
         # listen for the client's response and return None if the client drops out
-        if self.clients[client_id].is_drop(): return None
-        return self.clients[client_id].reply(svr_pkg)
+        # if self.clients[client_id].is_drop(): return None
+        reply = self.clients[client_id].reply(svr_pkg)
+        return reply
 
     def pack(self, client_id):
         """
@@ -320,6 +331,7 @@ class BasicClient():
         eval_metric = 0
         data_loader = self.calculator.get_data_loader(dataset, batch_size=64)
         for batch_id, batch_data in enumerate(data_loader):
+
             bmean_eval_metric, bmean_loss = self.calculator.test(model, batch_data)
             loss += bmean_loss * len(batch_data[1])
             eval_metric += bmean_eval_metric * len(batch_data[1])
@@ -351,10 +363,15 @@ class BasicClient():
         :return:
             client_pkg: the package to be send to the server
         """
+        # print("In reply function of client")
         model = self.unpack(svr_pkg)
+        # print("CLient unpacked to package")
         loss = self.train_loss(model)
+        # print("Client evaluated the train losss")
         self.train(model)
+        # print("Client trained the model")
         cpkg = self.pack(model, loss)
+        # print("Client packed and finished")
         return cpkg
 
     def pack(self, model, loss):

@@ -1,5 +1,5 @@
 from torchvision import datasets, transforms
-from benchmark.toolkits import ClassifyCalculator, DefaultTaskGen, XYTaskReader
+from benchmark.toolkits import ClassifyCalculator, DefaultTaskGen, XYTaskReader, WholeTaskReader
 
 class TaskGen(DefaultTaskGen):
     def __init__(self, dist_id, num_clients = 1, skewness = 0.5):
@@ -25,7 +25,7 @@ class TaskGen(DefaultTaskGen):
         self.test_data = {'x': test_x, 'y': test_y}
         return
 
-class TaskReader(XYTaskReader):
+class TaskReader(WholeTaskReader):
     def __init__(self, taskpath=''):
         super(TaskReader, self).__init__(taskpath)
 

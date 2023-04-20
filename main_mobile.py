@@ -1,11 +1,11 @@
-import utils.fflow as flw
+import utils.fflow_mobile as flw
 import numpy as np
 import os
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 import torch
 import os
 import multiprocessing
-
+import pandas as pd
 class MyLogger(flw.Logger):
     def log(self, server=None):
         if server==None: return
@@ -28,15 +28,15 @@ class MyLogger(flw.Logger):
         
         valid_metrics, valid_losses = server.test_on_clients(self.current_round, 'valid')
         train_metrics, train_losses = server.test_on_clients(self.current_round, 'train')
-        self.output['train_losses'].append(1.0*sum([ck * closs for ck, closs in zip(server.client_vols, train_losses)])/server.data_vol)
+        self.output['train_losses'].append(1.0*sum([closs for closs in train_losses])/len([closs for closs in train_losses]))
         self.output['valid_accs'].append(valid_metrics)
         self.output['test_accs'].append(test_metric)
         self.output['test_losses'].append(test_loss)
-        self.output['mean_valid_accs'].append(1.0*sum([ck * acc for ck, acc in zip(server.client_vols, valid_metrics)])/server.data_vol)
+        self.output['mean_valid_accs'].append(sum([acc for acc in valid_metrics])/len([[acc for acc in valid_metrics]]))
         self.output['mean_curve'].append(np.mean(valid_metrics))
         self.output['var_curve'].append(np.std(valid_metrics))
-        for cid in range(server.num_clients):
-            self.output['client_accs'][server.clients[cid].name]=[self.output['valid_accs'][i][cid] for i in range(len(self.output['valid_accs']))]
+        # for cid in range(server.num_clients):
+        #     self.output['client_accs'][server.clients[cid].name]=[self.output['valid_accs'][i][cid] for i in range(len(self.output['valid_accs']))]
         print(self.temp.format("Training Loss:", self.output['train_losses'][-1]))
         print(self.temp.format("Testing Loss:", self.output['test_losses'][-1]))
         print(self.temp.format("Testing Accuracy:", self.output['test_accs'][-1]))
@@ -44,10 +44,32 @@ class MyLogger(flw.Logger):
         print(self.temp.format("Mean of Client Accuracy:", self.output['mean_curve'][-1]))
         print(self.temp.format("Std of Client Accuracy:", self.output['var_curve'][-1]))
 
+        # dataset = server['task']
+        if not os.path.exists('results/{}'.format(server.option['task'])):
+            os.mkdir('results/{}'.format(server.option['task']))
+
+        csv_path = 'results/{}/{}_algox{}_vx{}_freqx{}_num_edgex{}.csv'.format(server.option['task'],server.option['algorithm'],
+                                                server.option['iid'],
+                                                 server.option['mean_velocity'],
+                                                 server.option['edge_update_frequency'],
+                                                 server.option['num_edges'])
+        
+        
+        experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_acc'])
+        experiment_df['round'] = [i for i in range(len(self.output['test_accs']))]
+        experiment_df['test_acc'] = self.output['test_accs']
+        experiment_df['test_loss'] = self.output['test_losses']
+        experiment_df['train_loss'] = self.output['train_losses']
+        experiment_df['val_acc'] = self.output['mean_valid_accs']
+
+        experiment_df.to_csv(csv_path,index=False)
+
+
+
 
 logger = MyLogger()
 
-def main():
+def main_mobile():
     # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     print("CUDA Available" ,torch.cuda.is_available())
     multiprocessing.set_start_method('spawn')
@@ -64,7 +86,7 @@ def main():
     server.run()
 
 if __name__ == '__main__':
-    main()
+    main_mobile()
 
 
 

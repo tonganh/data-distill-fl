@@ -66,13 +66,24 @@ def read_option():
     parser.add_argument('--server_gpu_id', help='server process on this gpu', type=int, default=0)
     
 
+    parser.add_argument('--client_valid_ratio', help='client_valid_ratio', type=float, default=0.25)
+
     # args for moving fed
-    parser.add_argument('--mean_num_vehicle_clients', help='Mean number of vehicle clients on the road', type=int, default=100)
-    parser.add_argument('--std_num_vehicle_clients', help='Standard deviation number of vehicle clients on the road', type=int, default=5)
-    parser.add_argument('--mean_velocity', help='Mean velocity of vehicle clients on the road (km/round)', type=int, default=40)
+    parser.add_argument('--num_clients', help='Mean number of vehicle clients on the road', type=int, default=60)
+    parser.add_argument('--mean_num_clients', help='Mean number of vehicle clients on the road', type=int, default=50)
+    parser.add_argument('--std_num_clients', help='Standard deviation number of vehicle clients on the road', type=int, default=25)
+    
+    parser.add_argument('--mean_velocity', help='Mean velocity of vehicle clients on the road (km/round)', type=int, default=100)
     parser.add_argument('--std_velocity', help='Standard deviation of velocity of vehicle clients on the road', type=int, default=20)
+    
     parser.add_argument('--num_edges', help='Number of edge servers on the road', type=int, default=10)
-    parser.add_argument('--road_length', help='The length of the road',type=int, default=1000)
+    parser.add_argument('--road_distance', help='The length of the road',type=float, default=1000)
+
+    parser.add_argument('--edge_update_frequency', help='Edge update frequency', type=int, default=1)
+
+    parser.add_argument('--sample_with_replacement', help='Sample with replacement or not', type=int, default=0)
+
+    parser.add_argument('--iid', help='IID or not', type=bool, default=True)
 
     try: option = vars(parser.parse_args())
     except IOError as msg: parser.error(str(msg))
@@ -101,24 +112,25 @@ def initialize(option):
     utils.fmodule.Model = getattr(importlib.import_module(bmk_model_path), 'Model')
     task_reader = getattr(importlib.import_module(bmk_core_path), 'TaskReader')(taskpath=os.path.join('fedtask', option['task']))
     train_and_valid_data, test_data = task_reader.read_data()
+    print(train_and_valid_data)
+    print(test_data)
     # print(type(test_data))
     # print(train_data.keys(), valid_data.keys(), test_data.keys())
     # num_clients = len(client_names)
     # print("done")
 
-    # init client  (these clients will be eliminated later on)
-    print('init clients...')
-    client_path = '%s.%s' % ('algorithm', option['algorithm'])
-    Client=getattr(importlib.import_module(client_path), 'Client')
-    clients = [Client(option, name ='', train_data = test_data, valid_data = test_data) for cid in range(option['mean_num_vehicle_clients'])]
-    print('done')
+    # # init client  (these clients will be eliminated later on)
+    # print('init clients...')
+    # client_path = '%s.%s' % ('algorithm', option['algorithm'])
+    # Client=getattr(importlib.import_module(client_path), 'Client')
+    # clients = [Client(option, name ='', train_data = test_data, valid_data = test_data) for cid in range(option['mean_num_vehicle_clients'])]
+    # print('done')
 
     # init server
     print("init server...")
-    server_path = '%s.%s' % ('algorithm', option['algorithm'])
+    server_path = '%s.%s.%s' % ('algorithm', 'mobile_fl',option['algorithm'])
     print(utils.fmodule.device)
-    server = getattr(importlib.import_module(server_path), 'Server')(option, utils.fmodule.Model().to(utils.fmodule.device), 
-                                                                     clients = clients,
+    server = getattr(importlib.import_module(server_path), 'CloudServer')(option, utils.fmodule.Model().to(utils.fmodule.device), 
                                                                      train_and_valid_data = train_and_valid_data,test_data = test_data)
     # print('done')
     return server

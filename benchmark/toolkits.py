@@ -28,6 +28,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch
 ssl._create_default_https_context = ssl._create_unverified_context
 import importlib
+from sklearn.utils import shuffle
 
 def set_random_seed(seed=0):
     """Set random seed"""
@@ -393,8 +394,11 @@ class ClassifyCalculator(BasicTaskCalculator):
 
     def get_loss(self, model, data, device=None):
         tdata = self.data_to_device(data, device)
-        outputs = model(tdata[0])
-        loss = self.lossfunc(outputs, tdata[1])
+        input, target = tdata[0], tdata[1].type(torch.LongTensor)
+        target = target.to(self.device)
+
+        outputs = model(input)
+        loss = self.lossfunc(outputs, target)
         return loss
 
     @torch.no_grad()
@@ -409,9 +413,17 @@ class ClassifyCalculator(BasicTaskCalculator):
     def test(self, model, data, device=None):
         """Metric = Accuracy"""
         tdata = self.data_to_device(data, device)
+        # print("Data shape",tdata[0].shape, tdata[1].shape)
+        input, target = tdata[0], tdata[1].type(torch.LongTensor)
+        target = target.to(self.device)
+        # input = input.squeeze(1)
+        # print(input.shape)
+        # input = torch.flatten(input, start_dim = 1, end_dim = 2)
+        # print(input.shape)
         model = model.to(device)
-        outputs = model(tdata[0])
-        loss = self.lossfunc(outputs, tdata[-1])
+        outputs = model(input)
+        # print(outputs.dtype, target.dtype)
+        loss = self.lossfunc(outputs, target)
         y_pred = outputs.data.max(1, keepdim=True)[1]
         correct = y_pred.eq(tdata[1].data.view_as(y_pred)).long().cpu().sum()
         return (1.0 * correct / len(tdata[1])).item(), loss.item()
@@ -449,10 +461,45 @@ class XYTaskReader(BasicTaskReader):
     def read_data(self):
         with open(os.path.join(self.taskpath, 'data.json'), 'r') as inf:
             feddata = ujson.load(inf)
+        # print(feddata.keys())
+        # print(feddata['store'])
+    
         test_data = XYDataset(feddata['dtest']['x'], feddata['dtest']['y'])
         train_datas = [XYDataset(feddata[name]['dtrain']['x'], feddata[name]['dtrain']['y']) for name in feddata['client_names']]
         valid_datas = [XYDataset(feddata[name]['dvalid']['x'], feddata[name]['dvalid']['y']) for name in feddata['client_names']]
         return train_datas, valid_datas, test_data, feddata['client_names']
+
+
+class WholeTaskReader(BasicTaskReader):
+    def __init__(self, taskpath=''):
+        super(WholeTaskReader, self).__init__(taskpath)
+
+    def read_data(self):
+        with open(os.path.join(self.taskpath, 'data.json'), 'r') as inf:
+            feddata = ujson.load(inf)
+        # print(np.array(feddata['dtest']['x']).shape, np.array(feddata['dtest']['y']).shape)
+        # print(feddata['store'])
+        train_and_valid_X = []
+        # valid_X = []
+        train_and_valid_Y = []
+        # valid_Y = []
+        for client_name in feddata['client_names']:
+            client_train_X, client_train_Y = feddata[client_name]['dtrain']['x'],  feddata[client_name]['dtrain']['y']
+            # print("Client train x ", client_train_X)
+            client_valid_X, client_valid_Y = feddata[client_name]['dvalid']['x'],  feddata[client_name]['dvalid']['y']
+            # print(np.array(client_train_X).shape, np.array(client_train_Y).shape, np.array(client_valid_X).shape)
+            train_and_valid_X.append(np.array(client_train_X))
+            train_and_valid_Y.append(np.array(client_train_Y))
+            train_and_valid_X.append(np.array(client_valid_X))
+            train_and_valid_Y.append(np.array(client_valid_Y))
+        
+        train_and_valid_X, train_and_valid_Y = np.concatenate(train_and_valid_X, axis=0),  np.concatenate(train_and_valid_Y, axis=0)
+        # print(train_X.shape, train_Y.shape, valid_X.shape)
+        train_and_valid_data = XYDataset(train_and_valid_X, train_and_valid_Y)
+        test_data = XYDataset(feddata['dtest']['x'], feddata['dtest']['y'])
+        # train_datas = [XYDataset(feddata[name]['dtrain']['x'], feddata[name]['dtrain']['y']) for name in feddata['client_names']]
+        # valid_datas = [XYDataset(feddata[name]['dvalid']['x'], feddata[name]['dvalid']['y']) for name in feddata['client_names']]
+        return train_and_valid_data, test_data
 
 class IDXTaskReader(BasicTaskReader):
     def __init__(self, taskpath=''):
@@ -482,12 +529,13 @@ class XYDataset(Dataset):
             X: a list of features
             Y: a list of labels with the same length of X
         """
+        # print("XYDATASET", X,Y)
         if not self._check_equal_length(X, Y):
             raise RuntimeError("Different length of Y with X.")
         if totensor:
             try:
-                self.X = torch.tensor(X)
-                self.Y = torch.tensor(Y)
+                self.X = torch.Tensor(X)
+                self.Y = torch.Tensor(Y)
             except:
                 raise RuntimeError("Failed to convert input into torch.Tensor.")
         else:
@@ -495,11 +543,17 @@ class XYDataset(Dataset):
             self.Y = Y
         self.all_labels = list(set(self.tolist()[1]))
 
+        self.X, self.Y = shuffle(self.X,self.Y, random_state = 0)
+        # self.X, self.Y = self.X, self.Y
+
     def __len__(self):
         return len(self.Y)
 
     def __getitem__(self, item):
         return self.X[item], self.Y[item]
+    
+    def get_data(self):
+        return self.X, self.Y
 
     def tolist(self):
         if not isinstance(self.X, torch.Tensor):
