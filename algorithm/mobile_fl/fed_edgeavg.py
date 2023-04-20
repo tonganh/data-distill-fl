@@ -262,7 +262,6 @@ class CloudServer(BasicCloudServer):
             class_subsets = []
             all_classes = list(np.unique(self.y_train))
             num_partitions = len(all_classes) * self.mean_num_clients
-            for class in num_clients:
             
             print(np.unique(self.y_train))
 
