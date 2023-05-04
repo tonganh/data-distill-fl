@@ -13,7 +13,7 @@ from main_mobile import logger
 import os
 from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
-
+import torch
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,train_and_valid_data,test_data = None, clients = []):
@@ -77,7 +77,12 @@ class CloudServer(BasicCloudServer):
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
                 aggregated_clients_models , _= edge.communicate(aggregated_clients)
-                edge.model =  self.aggregate(aggregated_clients_models, p = [1.0  for cid in range(len(aggregated_clients))])
+                p = []
+                for client in aggregated_clients:
+                    client_weight = max(0.75 + client.rounds_since_last_changed * 0.05,1)
+                    p.append(client_weight)
+
+                edge.model =  self.aggregate(aggregated_clients_models, p = p)
         # models, train_losses = self.communicate(self.edges)
 
         # print("Done a training step")
@@ -241,25 +246,59 @@ class CloudServer(BasicCloudServer):
         client_data_lists = []
         training_size = self.x_train.shape[0]
         # print("X train", self.x_train.shape)
-        client_indices_split = np.split(np.array([idx for idx in range(training_size)]), num_clients)
-        for i in range(num_clients):
-            chosen_indices = client_indices_split[i]
-            client_X = self.x_train[chosen_indices]
-            client_Y = self.y_train[chosen_indices]
+        if self.option['non_iid_classes'] == 0:
+            client_indices_split = np.split(np.array([idx for idx in range(training_size)]), num_clients)
+            for i in range(num_clients):
+                chosen_indices = client_indices_split[i]
+                client_X = self.x_train[chosen_indices]
+                client_Y = self.y_train[chosen_indices]
+                # print(client_X.shape,client_Y.shape)
 
-            client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(client_X, client_Y, 
-                                                                                              test_size = self.option['client_valid_ratio'])
-            # print("Client X train",client_X_train)
+                client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(client_X, client_Y, 
+                                                                                                test_size = self.option['client_valid_ratio'])
+                # print("Client X train",client_X_train)
 
-            client_train_dataset = XYDataset(client_X_train, client_Y_train)
-            client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
-            # print(client_X_train.shape, client_X_valid.shape, client_Y_train.shape, client_Y_valid.shape)
+                client_train_dataset = XYDataset(client_X_train, client_Y_train)
+                client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
+                # print(client_X_train.shape, client_X_valid.shape, client_Y_train.shape, client_Y_valid.shape)
 
-            client_data_lists.append( (client_train_dataset, client_valid_dataset) )
+                client_data_lists.append( (client_train_dataset, client_valid_dataset) )
+        
+        elif self.option['non_iid_classes'] == 1:
+            non_iid_data_lists = []
+            all_classes = list(np.unique(self.y_train))
+            num_classes = len(all_classes)
+            # print(all_classes, num_classes)
+            num_partitions_per_class = num_clients // num_classes
+            partition_size = self.x_train.shape[0] // num_clients
+            print("Number of partitions per class", num_partitions_per_class)
+            print("partition size", partition_size)
+            # print(self.y_train.shape)
+            for label in all_classes:
+                label_indices = np.argwhere(self.y_train == label)
+                x_train_label = self.x_train[label_indices].squeeze(0)
+                y_train_label = self.y_train[label_indices]
+                y_train_label = y_train_label.squeeze(0)
+                print(x_train_label.shape, y_train_label.shape)
+                for i in range(num_partitions_per_class):
+                    x_train_label_partition = x_train_label[partition_size * i: partition_size * (i+1)]
+                    y_train_label_partition = y_train_label[partition_size * i: partition_size * (i+1)]
+                    print("partition shape: ", x_train_label_partition.shape, y_train_label_partition.shape)
+                    client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(x_train_label_partition, y_train_label_partition, 
+                                                                                                    test_size = self.option['client_valid_ratio'])
 
+                    # print(client_X_train.shape, client_Y_train.shape, client_X_valid.shape)
+                    client_train_dataset = XYDataset(client_X_train, client_Y_train)
+                    client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
+                    non_iid_data_lists.append( (client_train_dataset, client_valid_dataset) )
+            client_data_lists = non_iid_data_lists
+
+                    # print(y_train_label_partition, x_train_label_partition, x_train_label_partition.shape)
+                # print(x_train_label[0:10], y_train_label[0:10]
+            # print(np.unique(self.y_train))
+    
         
         return client_data_lists
-    
 
     def global_update_location(self):
         new_client_list = []
@@ -328,6 +367,13 @@ class CloudServer(BasicCloudServer):
             for client in client_buffer:
                 if edge_area[0] <= client.location <= edge_area[1]:
                     self.client_edge_mapping[edge_name].append(client.name)
+                    if client.edge_name == edge_name:
+                        client.rounds_since_last_changed +=1
+                    else:
+                        client.rounds_since_last_changed = 0
+                        client.edge_name = edge_name
+        
+        self.clients = client_buffer
         
         # print(self.client_edge_mapping)
 
@@ -444,14 +490,35 @@ class MobileClient(BasicMobileClient):
     def __init__(self, option, location,  velocity, name='', train_data=None, valid_data=None):
         super(MobileClient, self).__init__(option, location,  name, train_data, valid_data)
         self.velocity = velocity
-        self.edge = None
+        self.edge_name = None
         self.rounds_since_last_changed = -1
-    
+        self.mu = option['mu']
+
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
     
     def update_location(self):
         self.location += self.velocity
-    
-    def check_new_edge(self):
+
+    # def train(self, model):
+    #     # global parameters
+    #     src_model = copy.deepcopy(model)
+    #     src_model.freeze_grad()
+    #     model.train()
+    #     data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
+    #     optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+    #     for iter in range(self.epochs):
+    #         for batch_idx, batch_data in enumerate(data_loader):
+    #             model.zero_grad()
+    #             original_loss = self.calculator.get_loss(model, batch_data)
+    #             # proximal term
+    #             loss_proximal = 0
+    #             for pm, ps in zip(model.parameters(), src_model.parameters()):
+    #                 loss_proximal += torch.sum(torch.pow(pm-ps,2))
+    #             loss = original_loss + 0.5 * self.mu * loss_proximal                #
+    #             loss.backward()
+    #             optimizer.step()
+    #     return
+
+

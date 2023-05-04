@@ -1,6 +1,4 @@
 import random
-
-import torch
 from utils import fmodule
 import sys
 sys.path.append('..')
@@ -15,7 +13,7 @@ from main_mobile import logger
 import os
 from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
-from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
+import torch
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,train_and_valid_data,test_data = None, clients = []):
@@ -32,33 +30,15 @@ class CloudServer(BasicCloudServer):
         Start the federated learning symtem where the global model is trained iteratively.
         """
         logger.time_start('Total Time Cost')
-        previous_edge_data_list, previous_edges_model_list = None, None
         for round in range(self.num_rounds+1):
             print("--------------Round {}--------------".format(round))
             logger.time_start('Time Cost')
 
             # federated train
-            edge_data_list, edge_model_list = self.iterate(round)
+            self.iterate(round)
             # decay learning rate
             self.global_lr_scheduler(round)
 
-            if round == 0:
-                kl_div = [0 for i in range(len(self.edges))]
-                model_norm = [0 for i in range(len(self.edges))]
-            
-            else:
-                kl_div = []
-                model_norm = []
-                for i in range(len(self.edges)):
-                    edge_data = edge_data_list[i]
-                    previous_edge_data = previous_edge_data_list[i]
-                    # print(calculate_kl_div_from_data(edge_data,previous_edge_data))
-
-                    edge_model = edge_model_list[i]
-                    previous_edge_model = previous_edge_model_list[i]
-                    print(model_weight_divergence(edge_model,previous_edge_model))
-            
-            previous_edge_model_list, previous_edge_data_list = edge_model_list, edge_data_list
             logger.time_end('Time Cost')
             if logger.check_if_log(round, self.eval_interval): logger.log(self)
 
@@ -88,11 +68,9 @@ class CloudServer(BasicCloudServer):
         # print("Done sampling")
         # training
 
-        edges_data_list = []
+
         # first, aggregate the edges with their clients
         for edge in self.edges:
-            edge_data = edge.get_data()
-            edges_data_list.append(edge_data)
             aggregated_clients = []
             for client in self.selected_clients:
                 if client.name in self.client_edge_mapping[edge.name]:
@@ -113,12 +91,6 @@ class CloudServer(BasicCloudServer):
 
             for edge in self.edges:
                 edge.model = copy.deepcopy(self.model)
-
-        edges_models_list = []
-        for edge in self.edges:
-                edges_models_list.append(copy.deepcopy(edge.model))
-        
-        return edges_data_list, edges_models_list
 
 
 
@@ -287,7 +259,7 @@ class CloudServer(BasicCloudServer):
 
                 client_data_lists.append( (client_train_dataset, client_valid_dataset) )
         
-        else:
+        elif self.option['non_iid_classes'] == 1:
             non_iid_data_lists = []
             all_classes = list(np.unique(self.y_train))
             num_classes = len(all_classes)
@@ -319,10 +291,9 @@ class CloudServer(BasicCloudServer):
                     # print(y_train_label_partition, x_train_label_partition, x_train_label_partition.shape)
                 # print(x_train_label[0:10], y_train_label[0:10]
             # print(np.unique(self.y_train))
-
+    
         
         return client_data_lists
-    
 
     def global_update_location(self):
         new_client_list = []
@@ -384,7 +355,6 @@ class CloudServer(BasicCloudServer):
     def assign_client_to_server(self):
         client_buffer = self.clients.copy()
         for edge in self.edges:
-            edge_client_list = []
             edge_area = edge.cover_area
             edge_name = edge.name
             if edge not in self.client_edge_mapping:
@@ -392,10 +362,13 @@ class CloudServer(BasicCloudServer):
             for client in client_buffer:
                 if edge_area[0] <= client.location <= edge_area[1]:
                     self.client_edge_mapping[edge_name].append(client.name)
-                    client.associated_edge = edge
-                    edge_client_list.append(client)
-            edge.clients = edge_client_list
-
+                    if client.edge_name == edge_name:
+                        client.rounds_since_last_changed +=1
+                    else:
+                        client.rounds_since_last_changed = 0
+                        client.edge_name = edge_name
+        
+        self.clients = client_buffer
         
         # print(self.client_edge_mapping)
 
@@ -410,24 +383,6 @@ class CloudServer(BasicCloudServer):
 class EdgeServer(BasicEdgeServer):
     def __init__(self, option,model,cover_area, name = '', clients = [], test_data=None):
         super(EdgeServer, self).__init__(option,model,cover_area, name , clients , test_data)
-        self.clients = []
-
-    def update_client_list(self,clients):
-        self.clients = clients
-    
-    def get_data(self):
-        all_edge_data = []
-        for client in self.clients:
-            # print(client.train_data.X.shape)
-            # return client.train_data.X
-            all_edge_data.append(client.train_data.X)
-        
-        edge_data = torch.cat(all_edge_data,0)
-        # print(edge_data.shape)
-        return edge_data
-    
-
-    # def get_client_distribution()
 
     def print_edge_info(self):
         print('Edge {} - cover area: {}'.format(self.name,self.cover_area))
@@ -530,11 +485,35 @@ class MobileClient(BasicMobileClient):
     def __init__(self, option, location,  velocity, name='', train_data=None, valid_data=None):
         super(MobileClient, self).__init__(option, location,  name, train_data, valid_data)
         self.velocity = velocity
-        self.associated_server = None
-    
+        self.edge_name = None
+        self.rounds_since_last_changed = -1
+        self.mu = option['mu']
+
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
     
     def update_location(self):
         self.location += self.velocity
+
+    def train(self, model):
+        # global parameters
+        src_model = copy.deepcopy(model)
+        src_model.freeze_grad()
+        model.train()
+        data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
+        optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+        for iter in range(self.epochs):
+            for batch_idx, batch_data in enumerate(data_loader):
+                model.zero_grad()
+                original_loss = self.calculator.get_loss(model, batch_data)
+                # proximal term
+                loss_proximal = 0
+                for pm, ps in zip(model.parameters(), src_model.parameters()):
+                    loss_proximal += torch.sum(torch.pow(pm-ps,2))
+                loss = original_loss + 0.5 * self.mu * loss_proximal                #
+                loss.backward()
+                optimizer.step()
+        return
+
+

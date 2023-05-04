@@ -83,7 +83,7 @@ def read_option():
 
     parser.add_argument('--sample_with_replacement', help='Sample with replacement or not', type=int, default=0)
 
-    parser.add_argument('--iid', help='IID or not', type=bool, default=True)
+    parser.add_argument('--non_iid_classes', help='IID or not', type=int, default=0)
 
     try: option = vars(parser.parse_args())
     except IOError as msg: parser.error(str(msg))

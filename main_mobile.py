@@ -48,11 +48,12 @@ class MyLogger(flw.Logger):
         if not os.path.exists('results/{}'.format(server.option['task'])):
             os.mkdir('results/{}'.format(server.option['task']))
 
-        csv_path = 'results/{}/{}_algox{}_vx{}_freqx{}_num_edgex{}.csv'.format(server.option['task'],server.option['algorithm'],
-                                                server.option['iid'],
-                                                 server.option['mean_velocity'],
-                                                 server.option['edge_update_frequency'],
-                                                 server.option['num_edges'])
+        csv_path = 'results/{}/non_iidx{}_algox{}_vx{}_freqx{}_num_edgex{}.csv'.format(server.option['task'],  
+                                                                                server.option['non_iid_classes'],                 
+                                                                               server.option['algorithm'],
+                                                                                server.option['mean_velocity'],
+                                                                                server.option['edge_update_frequency'],
+                                                                                server.option['num_edges'])
         
         
         experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_acc'])
