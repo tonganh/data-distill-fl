@@ -6,6 +6,8 @@ import torch
 import os
 import multiprocessing
 import pandas as pd
+
+
 class MyLogger(flw.Logger):
     def log(self, server=None):
         if server==None: return
@@ -15,6 +17,8 @@ class MyLogger(flw.Logger):
                 "mean_curve":[],
                 "var_curve":[],
                 "train_losses":[],
+                'valid_losses': [],
+                'train_accs': [],
                 "test_accs":[],
                 "test_losses":[],
                 "valid_accs":[],
@@ -25,14 +29,19 @@ class MyLogger(flw.Logger):
             test_metric, test_loss = server.test(device=torch.device('cuda:0'))
         else:
             test_metric, test_loss = server.test()
-        
         valid_metrics, valid_losses = server.test_on_clients(self.current_round, 'valid')
         train_metrics, train_losses = server.test_on_clients(self.current_round, 'train')
+
+        # print(len(valid_metrics), len(valid_losses))
+        # print(len(train_metrics), len(train_losses))
+
         self.output['train_losses'].append(1.0*sum([closs for closs in train_losses])/len([closs for closs in train_losses]))
-        self.output['valid_accs'].append(valid_metrics)
+        self.output['valid_losses'].append(1.0*sum([closs for closs in valid_losses])/len([closs for closs in valid_losses]))
+        self.output['train_accs'].append(sum(train_metrics) / len(train_metrics) )
+        self.output['valid_accs'].append(sum(valid_metrics) / len(valid_metrics))
         self.output['test_accs'].append(test_metric)
         self.output['test_losses'].append(test_loss)
-        self.output['mean_valid_accs'].append(sum([acc for acc in valid_metrics])/len([[acc for acc in valid_metrics]]))
+        self.output['mean_valid_accs'].append(sum([acc for acc in valid_metrics]) / len([acc for acc in valid_metrics]))        
         self.output['mean_curve'].append(np.mean(valid_metrics))
         self.output['var_curve'].append(np.std(valid_metrics))
         # for cid in range(server.num_clients):
@@ -48,20 +57,26 @@ class MyLogger(flw.Logger):
         if not os.path.exists('results/{}'.format(server.option['task'])):
             os.mkdir('results/{}'.format(server.option['task']))
 
-        csv_path = 'results/{}/non_iidx{}_algox{}_vx{}_freqx{}_num_edgex{}.csv'.format(server.option['task'],  
+        csv_path = 'results/{}/non_iidx{}_algox{}_vx{}_freqx{}_num_edgex{}_num_epochsx{}_proportionx{}.csv'.format(server.option['task'],  
                                                                                 server.option['non_iid_classes'],                 
                                                                                server.option['algorithm'],
                                                                                 server.option['mean_velocity'],
                                                                                 server.option['edge_update_frequency'],
-                                                                                server.option['num_edges'])
+                                                                                server.option['num_edges'],
+                                                                                server.option['num_epochs'],
+                                                                                server.option['proportion'])
         
         
-        experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_acc'])
+        experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_loss','train_acc', 'val_acc'])
         experiment_df['round'] = [i for i in range(len(self.output['test_accs']))]
         experiment_df['test_acc'] = self.output['test_accs']
         experiment_df['test_loss'] = self.output['test_losses']
         experiment_df['train_loss'] = self.output['train_losses']
+        experiment_df['val_loss'] = self.output['valid_losses']
         experiment_df['val_acc'] = self.output['mean_valid_accs']
+        experiment_df['train_acc'] =  self.output['train_accs']
+
+
 
         experiment_df.to_csv(csv_path,index=False)
 

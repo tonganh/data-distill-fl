@@ -1,3 +1,4 @@
+import random
 from utils import fmodule
 import sys
 sys.path.append('..')
@@ -8,14 +9,12 @@ import numpy as np
 
 
 class BasicCloudServer(BasicServer):
-    def __init__(self, option, model ,train_and_valid_data,test_data = None, clients = []):
+    def __init__(self, option, model ,clients,test_data = None):
         super(BasicCloudServer, self).__init__(option, model, clients, test_data)
-        self.clients = []
-        self.road_distance = option['road_distance']
-        
-        
+        # self.clients = []
+        # print(clients)
+        self.road_distance = option['road_distance'] 
         self.left_road_limit, self.right_road_limit =  - self.road_distance / 2, self.road_distance / 2
-        
         
         self.mean_num_clients = option['num_clients']
         self.std_num_clients = option['std_num_clients']
@@ -24,93 +23,116 @@ class BasicCloudServer(BasicServer):
         self.num_edges = option['num_edges']
         self.edges = []
 
-        self.train_and_valid_data = train_and_valid_data
-        self.clients = []
-
-
-
         self.mean_velocity = option['mean_velocity']
         self.std_velocity = option['std_velocity']
-
-        self.train_and_valid_data = train_and_valid_data
-        self.test_data = test_data
-
         self.edge_update_frequency = option['edge_update_frequency']
 
-        self.sample_with_replacement = option['sample_with_replacement']
+        # self.sample_with_replacement = option['sample_with_replacement']
         self.client_edge_mapping = {}
-        
-        self.num_data_samples_per_client = len(self.train_and_valid_data) // self.mean_num_clients
+        self.unused_clients_queue = []
 
         self.option = option
 
-        self.x_train , self.y_train = self.train_and_valid_data.get_data()
-        self.x_test, self.y_test = self.test_data.get_data()
-
-        print(self.x_train.shape, self.y_train.shape, self.x_test.shape, self.y_test.shape)
-
-        # self.intialize()
-
-    def initialize_clients(self):
-        pass
+        # List to store clients currently in range
+        self.selected_clients = []
+        # List to store clients currently out of range
+        self.unused_clients_queue = []
+        # print("Clients" , self.clients)
 
 
-    def initialize_server_lists(self):
-        return None
-    
-
-    def assign_client_to_server(self):
-        pass
-
-
-
-    def iterate(self, t):
-        """
-        The standard iteration of each federated round that contains three
-        necessary procedure in FL: client selection, communication and model aggregation.
-        :param
-            t: the number of current round
-        """
-        # sample clients: MD sampling as default but with replacement=False
-        # print("Iterating")
-        self.selected_clients = self.sample()
-        # print("Done sampling")
-        # training
-        models, train_losses = self.communicate(self.selected_clients)
-        # print("Done a training step")
-        # check whether all the clients have dropped out, because the dropped clients will be deleted from self.selected_clients
-        if not self.selected_clients: return
-        # aggregate: pk = 1/K as default where K=len(selected_clients)
-        self.model = self.aggregate(models, p = [1.0 * self.client_vols[cid]/self.data_vol for cid in self.selected_clients])
-        return
     
     def global_update_location(self):
-        # """Update the location of all clients"""
-        # new_client_list = []
-        # for client in self.clients:
-        #     client.update_location()
-        #     new_client_list.append(client)
-        # self.clients = new_client_list
-        pass
-    
+        new_client_list = []
+        for client in self.clients:
+            # client.print_client_info()
+            # print(client.location)
+            client.update_location()
+            # print(client.location)
+            new_client_list.append(client)
+        self.clients = new_client_list
+
+    def assign_client_to_server(self):
+        client_buffer = self.clients.copy()
+        for edge in self.edges:
+            edge_area = edge.cover_area
+            edge_name = edge.name
+            if edge not in self.client_edge_mapping:
+                self.client_edge_mapping[edge_name] = []
+            for client in client_buffer:
+                if edge_area[0] <= client.location <= edge_area[1]:
+                    self.client_edge_mapping[edge_name].append(client.name)
+        # print(self.client_edge_mapping)
+                    # print(self.client_edge_mapping)
+        
+    def update_client_list(self):
+        filtered_client_list = []
+        filtered = 0
+        for client in self.clients:
+            # client.print_client_info()
+            if self.left_road_limit <= client.location <= self.right_road_limit:
+                filtered_client_list.append(client)
+                # print(True)
+            else:
+                self.unused_clients_queue.append(client)
+                filtered +=1
+                # print(False)
+        # print("Number of filtered clients",filtered)
+        self.clients = filtered_client_list
+        if len(self.clients) < self.mean_num_clients - self.std_num_clients:
+            self.current_num_clients = np.random.randint(low = self.mean_num_clients - self.std_num_clients, high=self.mean_num_clients+self.std_num_clients + 1,
+                                                        size=1)[0]
+            num_clients_to_readd = self.current_num_clients - len(self.clients)
+            if num_clients_to_readd < len(self.unused_clients_queue):
+                clients_to_readd = random.sample(self.unused_clients_queue, k = num_clients_to_readd)
+                for client in clients_to_readd:
+                    client.location =np.random.randint( self.left_road_limit, self.right_road_limit, size =1)[0]
+                    self.clients.append(client)
+                    # client.location = client
+            else:
+                clients_to_readd = self.unused_clients_queue
+                for client in clients_to_readd:
+                    client.location =np.random.randint( self.left_road_limit, self.right_road_limit, size =1)[0]
+                    self.clients.append(client)
+
     def get_current_num_clients(self):
         self.current_num_clients = np.random.randint()
-
-    def update_client_lists(self):
-        """Filter out the clients that are too far away"""
-        # self.global_update_location()
-        # filtered_client_list = []
-        # for client in self.clients:
-        #     if self.left_road_limit <= client.get_location <= self.right_road_limit:
-        #         filtered_client_list.append(client)
-        
-        # self.clients = filtered_client_list
-        # self.current_num_clients = np.random.randint(low = self.mean_num_clients - self.std_num_clients, high=self.mean_num_clients+self.std_num_clients,
-        #                                              size=1)[0]
-        # if self.current_num_clients > len(filtered_client_list):
-        #     self.sample_new_clients(num_new_clients=self.current_num_clients - len(filtered_client_list))
-        pass
     
+    def initialize_clients_location_velocity(self):
+        new_client_list = []
+        locations = np.random.randint( self.left_road_limit, self.right_road_limit, size = len(self.clients))
+        if self.option['mean_velocity'] != 0:
+            velocities_absolute = np.random.randint( self.mean_velocity - self.std_velocity, self.mean_velocity + self.std_velocity, size = len(self.clients))
+            velocities_direction = np.array([random.choice([-1,1]) for i in range(len(self.clients))])
+            velocities = velocities_absolute * velocities_direction
+            # print(velocities_direction, velocities)
+        else:
+            velocities = np.array([0 for i in range(len(self.clients))])
+
+        for i  in range(len(self.clients)):
+            client = self.clients[i]
+            client.location = locations[i] 
+            client.velocity = velocities[i]
+            new_client_list.append(client)
+        
+        self.clients = new_client_list
+        
+
+
+    def print_edges_info(self):
+        print("Current number of edges: ", self.num_edges)
+        for edge in self.edges:
+            edge.print_edge_info()
+    
+    # def print_client_info(self):
+    #     for client in self.clients
+            
+
+    def initialize(self):
+        # self.initialize_edges()
+        self.assign_client_to_server()
+        self.initialize_clients_location_velocity()
+
+
     def sample_new_clients(self, num_new_clients):
         # for i in range(num_new_clients):
         #     initial_location = self.
@@ -126,6 +148,7 @@ class BasicEdgeServer(BasicServer):
         self.cover_area = cover_area
         self.name = name
         self.option = option
+        self.total_datavol = 0
         # self.list_clients = []
     
 
@@ -135,9 +158,10 @@ class BasicEdgeServer(BasicServer):
     
 
 class BasicMobileClient(BasicClient):
-    def __init__(self, option, location,  name='', train_data=None, valid_data=None):
+    def __init__(self, option, location = 0, velocity = 0, name='', train_data=None, valid_data=None):
         super(BasicMobileClient, self).__init__(option, name, train_data, valid_data)
         self.location = location
+        self.velocity = velocity
         # self.mean_velocity = mean_velocity
         # self.std_velocity = std_velocity
         # self.current_velocity = mean_velocity
@@ -146,8 +170,8 @@ class BasicMobileClient(BasicClient):
     #     self.current_velocity = np.random.randint(low=self.mean_velocity - self.std_velocity, high=self.mean_velocity + self.std_velocity, size = 1)[0]
 
     def update_location(self):
-        pass
-    
+        self.location += self.velocity
+
     def get_location(self):
         return self.location
     

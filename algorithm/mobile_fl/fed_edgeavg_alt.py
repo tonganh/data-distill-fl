@@ -17,6 +17,7 @@ from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
 from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
 
+
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,clients,test_data = None):
         super(CloudServer, self).__init__( option, model,clients,test_data )
@@ -67,13 +68,31 @@ class CloudServer(BasicCloudServer):
         # print("Done assigning client to sercer")
 
         self.selected_clients = self.sample()
-        print("Selected clients", len(self.selected_clients))
+        # print("Selected clients", len(self.selected_clients))
 
         # for client in self.selected_clients:
         #     client.print_client_info()
         # print("Done sampling")
         # training
 
+
+        # sum datavol
+        for edge in self.edges:
+            aggregated_clients = []
+            for client in self.selected_clients:
+                if client.name in self.client_edge_mapping[edge.name]:
+                    aggregated_clients.append(client)
+            if len(aggregated_clients) > 0:
+                aggregated_clients_models , _= edge.communicate(aggregated_clients)
+                edge_total_datavol = sum([client.datavol for client in aggregated_clients])
+                edge.total_datavol = edge_total_datavol
+                sum_datavol = sum([edge.total_datavol for edge in self.edges])
+
+            #     aggregation_weights = [client.datavol / edge_total_datavol]
+            #     edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
+            # else:
+            #     print('No aggregated clients')
+            
         # first, aggregate the edges with their clients
         for edge in self.edges:
             aggregated_clients = []
@@ -86,8 +105,8 @@ class CloudServer(BasicCloudServer):
                 edge.total_datavol = edge_total_datavol
                 aggregation_weights = [client.datavol / edge_total_datavol]
                 edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
-            else:
-                print('No aggregated clients')
+            # else:
+            #     print('No aggregated clients')
         # models, train_losses = self.communicate(self.edges)
 
         # print("Done a training step")
@@ -459,7 +478,4 @@ class MobileClient(BasicMobileClient):
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
-
-    def update_location(self):
-        # self.location += self.velocity
-        self.location  = np.random.randint(low=-self.option['road_distance']//2, high = self.option['road_distance']//2, size = 1)[0]
+    

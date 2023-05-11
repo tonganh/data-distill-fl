@@ -18,13 +18,9 @@ from multiprocessing import Pool as ThreadPool
 from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
 
 class CloudServer(BasicCloudServer):
-    def __init__(self, option, model ,train_and_valid_data,test_data = None, clients = []):
-        super(CloudServer, self).__init__( option, model,train_and_valid_data,test_data, clients )
+    def __init__(self, option, model ,clients,test_data = None):
+        super(CloudServer, self).__init__( option, model,clients,test_data )
         self.initialize()
-        # self.print_clients_info()
-        # self.print_edges_info()
-        self.unused_clients_queue = []
-        print("Done with initialization")
 
 
     def run(self):
@@ -32,33 +28,15 @@ class CloudServer(BasicCloudServer):
         Start the federated learning symtem where the global model is trained iteratively.
         """
         logger.time_start('Total Time Cost')
-        previous_edge_data_list, previous_edges_model_list = None, None
         for round in range(self.num_rounds+1):
             print("--------------Round {}--------------".format(round))
             logger.time_start('Time Cost')
-
+            # print(self.clients)
             # federated train
-            edge_data_list, edge_model_list = self.iterate(round)
+            self.iterate(round)
             # decay learning rate
             self.global_lr_scheduler(round)
 
-            if round == 0:
-                kl_div = [0 for i in range(len(self.edges))]
-                model_norm = [0 for i in range(len(self.edges))]
-            
-            else:
-                kl_div = []
-                model_norm = []
-                for i in range(len(self.edges)):
-                    edge_data = edge_data_list[i]
-                    previous_edge_data = previous_edge_data_list[i]
-                    # print(calculate_kl_div_from_data(edge_data,previous_edge_data))
-
-                    edge_model = edge_model_list[i]
-                    previous_edge_model = previous_edge_model_list[i]
-                    print(model_weight_divergence(edge_model,previous_edge_model))
-            
-            previous_edge_model_list, previous_edge_data_list = edge_model_list, edge_data_list
             logger.time_end('Time Cost')
             if logger.check_if_log(round, self.eval_interval): logger.log(self)
 
@@ -74,6 +52,11 @@ class CloudServer(BasicCloudServer):
         :param
             t: the number of current round
         """
+        # First, distill all data on clients' side
+        # for client in self.clients:
+        #     client.distill_data()
+
+
         # sample clients: MD sampling as default but with replacement=False
         # print("Iterating")
         self.global_update_location()
@@ -84,22 +67,25 @@ class CloudServer(BasicCloudServer):
         # print("Done assigning client to sercer")
 
         self.selected_clients = self.sample()
-        # print("Selected clients", self.selected_clients)
-        # print("Done sampling")
-        # training
+        print("Selected clients", len(self.selected_clients))
 
-        edges_data_list = []
-        # first, aggregate the edges with their clients
+        # first, aggregate the edges with their clientss
+        # for client in self.selected_clients:
+        #     client.print_client_info()
         for edge in self.edges:
-            edge_data = edge.get_data()
-            edges_data_list.append(edge_data)
             aggregated_clients = []
             for client in self.selected_clients:
                 if client.name in self.client_edge_mapping[edge.name]:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
                 aggregated_clients_models , _= edge.communicate(aggregated_clients)
-                edge.model =  self.aggregate(aggregated_clients_models, p = [1.0  for cid in range(len(aggregated_clients))])
+                edge_total_datavol = sum([client.datavol for client in aggregated_clients])
+                edge.total_datavol = edge_total_datavol
+                aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
+                # print(len(aggregation_weights), len(aggregated_clients_models))
+                edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
+            # else:
+            #     print('No aggregated clients')
         # models, train_losses = self.communicate(self.edges)
 
         # print("Done a training step")
@@ -109,7 +95,9 @@ class CloudServer(BasicCloudServer):
         # models = [edge.model for edge in self.edges]
         if t % self.edge_update_frequency == 0:
             models = [edge.model for edge in self.edges]
-            self.model = self.aggregate(models, p = [1.0  for cid in range(len(self.edges))])
+            sum_datavol = sum([edge.total_datavol for edge in self.edges])
+            edge_weights = [edge.total_datavol / sum_datavol for edge in self.edges]
+            self.model = self.aggregate(models, p = edge_weights)
 
             for edge in self.edges:
                 edge.model = copy.deepcopy(self.model)
@@ -118,7 +106,6 @@ class CloudServer(BasicCloudServer):
         for edge in self.edges:
                 edges_models_list.append(copy.deepcopy(edge.model))
         
-        return edges_data_list, edges_models_list
 
 
 
@@ -213,157 +200,31 @@ class CloudServer(BasicCloudServer):
 
 
 
-    def create_clients(self, num_clients):
-        locations = np.random.randint( self.left_road_limit, self.right_road_limit, size = num_clients)
-        if self.option['mean_velocity'] != 0:
-            velocities = np.random.randint( - (self.mean_velocity + self.std_velocity), self.mean_velocity + self.std_velocity, size = num_clients)
-        else:
-            velocities = np.array([0 for i in range(num_clients)])
-        name_lists = ['c' + str(client_id) for client_id in range(num_clients)]
-        if self.option['sample_with_replacement']:
-            client_data_lists = self.sample_data_with_replacement(num_clients=num_clients)
-        else:
-            client_data_lists = self.sample_data_without_replacement(num_clients=num_clients)
+    # def create_clients(self, num_clients):
+    #     locations = np.random.randint( self.left_road_limit, self.right_road_limit, size = num_clients)
+    #     if self.option['mean_velocity'] != 0:
+    #         velocities = np.random.randint( - (self.mean_velocity + self.std_velocity), self.mean_velocity + self.std_velocity, size = num_clients)
+    #     else:
+    #         velocities = np.array([0 for i in range(num_clients)])
+    #     name_lists = ['c' + str(client_id) for client_id in range(num_clients)]
+    #     if self.option['sample_with_replacement']:
+    #         client_data_lists = self.sample_data_with_replacement(num_clients=num_clients)
+    #     else:
+    #         client_data_lists = self.sample_data_without_replacement(num_clients=num_clients)
 
-        new_clients = []
-        for i in range(num_clients):
-            client_train_data, client_valid_data = client_data_lists[i]
-            client = MobileClient(self.option, location=locations[i], velocity=velocities[i], name=name_lists[i], 
-                                  train_data=client_train_data, valid_data = client_valid_data)
-            new_clients.append(client)
+    #     new_clients = []
+    #     for i in range(num_clients):
+    #         client_train_data, client_valid_data = client_data_lists[i]
+    #         client = MobileClient(self.option, location=locations[i], velocity=velocities[i], name=name_lists[i], 
+    #                               train_data=client_train_data, valid_data = client_valid_data)
+    #         new_clients.append(client)
         
-        return new_clients
+    #     return new_clients
     
-    def initialize_clients(self):
-        self.clients = self.create_clients(self.current_num_clients)
+    # def initialize_clients(self):
+    #     self.clients = self.create_clients(self.current_num_clients)
     
         
-
-    def print_clients_info(self):
-        print("Current number of clients: ", self.current_num_clients)
-        for client in self.clients:
-            client.print_client_info()
-    
-    def sample_data_with_replacement(self, num_clients):
-        client_data_lists = []
-        training_size = self.x_train.shape[0]
-        for i in range(num_clients):
-            chosen_indices = random.sample([idx for idx in range(training_size)], self.num_data_samples_per_client)
-            client_X = self.x_train[chosen_indices]
-            client_Y = self.y_train[chosen_indices]
-
-            client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(client_X, client_Y, 
-                                                                                              test_size = self.option['client_valid_ratio'],
-                                                                                              random_state=self.option['seed'])
-            # print(client_X_train)
-            client_train_dataset = XYDataset(client_X_train, client_Y_train)
-            client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
-            # print(client_X_train.shape, client_X_valid.shape, client_Y_train.shape, client_Y_valid.shape)
-
-            client_data_lists.append( (client_train_dataset, client_valid_dataset) )
-        
-        return client_data_lists
-
-
-    def sample_data_without_replacement(self, num_clients):
-        client_data_lists = []
-        training_size = self.x_train.shape[0]
-        # print("X train", self.x_train.shape)
-        if self.option['non_iid_classes'] == 0:
-            client_indices_split = np.split(np.array([idx for idx in range(training_size)]), num_clients)
-            for i in range(num_clients):
-                chosen_indices = client_indices_split[i]
-                client_X = self.x_train[chosen_indices]
-                client_Y = self.y_train[chosen_indices]
-                # print(client_X.shape,client_Y.shape)
-
-                client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(client_X, client_Y, 
-                                                                                                test_size = self.option['client_valid_ratio'])
-                # print("Client X train",client_X_train)
-
-                client_train_dataset = XYDataset(client_X_train, client_Y_train)
-                client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
-                # print(client_X_train.shape, client_X_valid.shape, client_Y_train.shape, client_Y_valid.shape)
-
-                client_data_lists.append( (client_train_dataset, client_valid_dataset) )
-        
-        else:
-            non_iid_data_lists = []
-            all_classes = list(np.unique(self.y_train))
-            num_classes = len(all_classes)
-            # print(all_classes, num_classes)
-            num_partitions_per_class = num_clients // num_classes
-            partition_size = self.x_train.shape[0] // num_clients
-            print("Number of partitions per class", num_partitions_per_class)
-            print("partition size", partition_size)
-            # print(self.y_train.shape)
-            for label in all_classes:
-                label_indices = np.argwhere(self.y_train == label)
-                x_train_label = self.x_train[label_indices].squeeze(0)
-                y_train_label = self.y_train[label_indices]
-                y_train_label = y_train_label.squeeze(0)
-                print(x_train_label.shape, y_train_label.shape)
-                for i in range(num_partitions_per_class):
-                    x_train_label_partition = x_train_label[partition_size * i: partition_size * (i+1)]
-                    y_train_label_partition = y_train_label[partition_size * i: partition_size * (i+1)]
-                    print("partition shape: ", x_train_label_partition.shape, y_train_label_partition.shape)
-                    client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(x_train_label_partition, y_train_label_partition, 
-                                                                                                    test_size = self.option['client_valid_ratio'])
-
-                    # print(client_X_train.shape, client_Y_train.shape, client_X_valid.shape)
-                    client_train_dataset = XYDataset(client_X_train, client_Y_train)
-                    client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
-                    non_iid_data_lists.append( (client_train_dataset, client_valid_dataset) )
-            client_data_lists = non_iid_data_lists
-
-                    # print(y_train_label_partition, x_train_label_partition, x_train_label_partition.shape)
-                # print(x_train_label[0:10], y_train_label[0:10]
-            # print(np.unique(self.y_train))
-
-        
-        return client_data_lists
-    
-
-    def global_update_location(self):
-        new_client_list = []
-        for client in self.clients:
-            client.update_location()
-            new_client_list.append(client)
-        self.clients = new_client_list
-
-    
-    def update_client_list(self):
-        filtered_client_list = []
-        filtered = 0
-        for client in self.clients:
-            if self.left_road_limit <= client.location <= self.right_road_limit:
-                filtered_client_list.append(client)
-            else:
-                self.unused_clients_queue.append(client)
-                filtered +=1
-        # print("Number of filtered clients",filtered)
-        self.clients = filtered_client_list
-        if len(self.clients) < self.mean_num_clients - self.std_num_clients:
-            self.current_num_clients = np.random.randint(low = self.mean_num_clients - self.std_num_clients, high=self.mean_num_clients+self.std_num_clients + 1,
-                                                        size=1)[0]
-            num_clients_to_readd = self.current_num_clients - len(self.clients)
-            if num_clients_to_readd < len(self.unused_clients_queue):
-                clients_to_readd = random.sample(self.unused_clients_queue, k = num_clients_to_readd)
-                self.clients.extend(clients_to_readd)
-            else:
-                self.clients.extend(self.unused_clients_queue)
-
-        
-        self.unused_clients_queue = list(set(self.unused_clients_queue) - set(self.clients))
-        print("Number of unused clients", len(self.unused_clients_queue))
-
-
-
-            # self.sample_new_clients(num_new_clients=self.current_num_clients - len(filtered_client_list))
-     
-
-
-
     def initialize_edges(self):
         cover_areas = [(self.left_road_limit + int(self.road_distance / self.num_edges) * i,
                          self.left_road_limit + int(self.road_distance / self.num_edges) * (i+1)) for i in range(self.num_edges)  ]
@@ -373,38 +234,100 @@ class CloudServer(BasicCloudServer):
             edge = EdgeServer(self.option, model = copy.deepcopy(self.model)
                               , cover_area=cover_areas[i], name=name_lists[i], test_data = None)
             self.edges.append(edge)
-    
-    def print_edges_info(self):
-        print("Current number of edges: ", self.num_edges)
-        for edge in self.edges:
-            edge.print_edge_info()
+
+    def print_clients_info(self):
+        print("Current number of clients: ", self.current_num_clients)
+        for client in self.clients:
+            client.print_client_info()
+
+    def initialize(self):
+        self.initialize_edges()
+        self.assign_client_to_server()
+        self.initialize_clients_location_velocity()
 
 
+    # def sample_data_with_replacement(self, num_clients):
+    #     client_data_lists = []
+    #     training_size = self.x_train.shape[0]
+    #     for i in range(num_clients):
+    #         chosen_indices = random.sample([idx for idx in range(training_size)], self.num_data_samples_per_client)
+    #         client_X = self.x_train[chosen_indices]
+    #         client_Y = self.y_train[chosen_indices]
 
-    def assign_client_to_server(self):
-        client_buffer = self.clients.copy()
-        for edge in self.edges:
-            edge_client_list = []
-            edge_area = edge.cover_area
-            edge_name = edge.name
-            if edge not in self.client_edge_mapping:
-                self.client_edge_mapping[edge_name] = []
-            for client in client_buffer:
-                if edge_area[0] <= client.location <= edge_area[1]:
-                    self.client_edge_mapping[edge_name].append(client.name)
-                    client.associated_edge = edge
-                    edge_client_list.append(client)
-            edge.clients = edge_client_list
+    #         client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(client_X, client_Y, 
+    #                                                                                           test_size = self.option['client_valid_ratio'],
+    #                                                                                           random_state=self.option['seed'])
+    #         # print(client_X_train)
+    #         client_train_dataset = XYDataset(client_X_train, client_Y_train)
+    #         client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
+    #         # print(client_X_train.shape, client_X_valid.shape, client_Y_train.shape, client_Y_valid.shape)
 
+    #         client_data_lists.append( (client_train_dataset, client_valid_dataset) )
+        
+    #     return client_data_lists
+
+
+    # def sample_data_without_replacement(self, num_clients):
+    #     client_data_lists = []
+    #     training_size = self.x_train.shape[0]
+    #     # print("X train", self.x_train.shape)
+    #     if self.option['non_iid_classes'] == 0:
+    #         client_indices_split = np.split(np.array([idx for idx in range(training_size)]), num_clients)
+    #         for i in range(num_clients):
+    #             chosen_indices = client_indices_split[i]
+    #             client_X = self.x_train[chosen_indices]
+    #             client_Y = self.y_train[chosen_indices]
+    #             # print(client_X.shape,client_Y.shape)
+
+    #             client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(client_X, client_Y, 
+    #                                                                                             test_size = self.option['client_valid_ratio'])
+    #             # print("Client X train",client_X_train)
+
+    #             client_train_dataset = XYDataset(client_X_train, client_Y_train)
+    #             client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
+    #             # print(client_X_train.shape, client_X_valid.shape, client_Y_train.shape, client_Y_valid.shape)
+
+    #             client_data_lists.append( (client_train_dataset, client_valid_dataset) )
+        
+    #     else:
+    #         non_iid_data_lists = []
+    #         all_classes = list(np.unique(self.y_train))
+    #         num_classes = len(all_classes)
+    #         # print(all_classes, num_classes)
+    #         num_partitions_per_class = num_clients // num_classes
+    #         partition_size = self.x_train.shape[0] // num_clients
+    #         print("Number of partitions per class", num_partitions_per_class)
+    #         print("partition size", partition_size)
+    #         # print(self.y_train.shape)
+    #         for label in all_classes:
+    #             label_indices = np.argwhere(self.y_train == label)
+    #             x_train_label = self.x_train[label_indices].squeeze(0)
+    #             y_train_label = self.y_train[label_indices]
+    #             y_train_label = y_train_label.squeeze(0)
+    #             print(x_train_label.shape, y_train_label.shape)
+    #             for i in range(num_partitions_per_class):
+    #                 x_train_label_partition = x_train_label[partition_size * i: partition_size * (i+1)]
+    #                 y_train_label_partition = y_train_label[partition_size * i: partition_size * (i+1)]
+    #                 print("partition shape: ", x_train_label_partition.shape, y_train_label_partition.shape)
+    #                 client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(x_train_label_partition, y_train_label_partition, 
+    #                                                                                                 test_size = self.option['client_valid_ratio'])
+
+    #                 # print(client_X_train.shape, client_Y_train.shape, client_X_valid.shape)
+    #                 client_train_dataset = XYDataset(client_X_train, client_Y_train)
+    #                 client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
+    #                 non_iid_data_lists.append( (client_train_dataset, client_valid_dataset) )
+    #         client_data_lists = non_iid_data_lists
+
+    #                 # print(y_train_label_partition, x_train_label_partition, x_train_label_partition.shape)
+    #             # print(x_train_label[0:10], y_train_label[0:10]
+    #         # print(np.unique(self.y_train))
+
+        
+    #     return client_data_lists
         
         # print(self.client_edge_mapping)
 
 
-
-    def initialize(self):
-        self.initialize_clients()
-        self.initialize_edges()
-        self.assign_client_to_server()
 
 
 class EdgeServer(BasicEdgeServer):
@@ -469,7 +392,6 @@ class EdgeServer(BasicEdgeServer):
         """
         # package the necessary information
         edge_pkg = self.pack()
-        # print(svr_pkg)
         # listen for the client's response and return None if the client drops out
         # if self.clients[client_id].is_drop(): return None
         reply = client.reply(edge_pkg)
@@ -499,42 +421,40 @@ class EdgeServer(BasicEdgeServer):
         # unpack the received package
         return received_pkg['model']
 
-    def reply(self, svr_pkg):
-        """
-        Reply to server with the transmitted package.
-        The whole local procedure should be planned here.
-        The standard form consists of three procedure:
-        unpacking the server_package to obtain the global model,
-        training the global model, and finally packing the improved
-        model into client_package.
-        :param
-            svr_pkg: the package received from the server
-        :return:
-            client_pkg: the package to be send to the server
-        """
-        # print("In reply function of client")
-        # print(svr_pkg)
-        model = self.unpack_svr(svr_pkg)
-        # print("CLient unpacked to package")
-        # loss = self.train_loss(model)
-        loss = 0
-        # print("Client evaluated the train losss")
-        self.train(model)
-        # print("Client trained the model")
-        cpkg = self.pack(model, loss)
-        # print("Client packed and finished")
-        return cpkg
+    # def reply(self, svr_pkg):
+    #     """
+    #     Reply to server with the transmitted package.
+    #     The whole local procedure should be planned here.
+    #     The standard form consists of three procedure:
+    #     unpacking the server_package to obtain the global model,
+    #     training the global model, and finally packing the improved
+    #     model into client_package.
+    #     :param
+    #         svr_pkg: the package received from the server
+    #     :return:
+    #         client_pkg: the package to be send to the server
+    #     """
+    #     # print("In reply function of client")
+    #     # print(svr_pkg)
+    #     model = self.unpack_svr(svr_pkg)
+    #     # print("CLient unpacked to package")
+    #     # loss = self.train_loss(model)
+    #     loss = 0
+    #     print("Client evaluated the train losss")
+    #     self.train(model)
+    #     print("Client trained the model")
+    #     cpkg = self.pack(model, loss)
+    #     # print("Client packed and finished")
+    #     return cpkg
 
 
 class MobileClient(BasicMobileClient):
-    def __init__(self, option, location,  velocity, name='', train_data=None, valid_data=None):
-        super(MobileClient, self).__init__(option, location,  name, train_data, valid_data)
-        self.velocity = velocity
+    def __init__(self, option, location = 0,  velocity = 0, name='', train_data=None, valid_data=None):
+        super(MobileClient, self).__init__(option, location, velocity,  name, train_data, valid_data)
+        # self.velocity = velocity
         self.associated_server = None
     
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
     
-    def update_location(self):
-        self.location += self.velocity

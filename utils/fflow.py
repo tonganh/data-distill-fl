@@ -87,41 +87,33 @@ def setup_seed(seed):
 
 def initialize(option):
     # init fedtask
-    print("init fedtask...")
+    print("init fedtask...", end='')
     # dynamical initializing the configuration with the benchmark
     bmk_name = option['task'][:option['task'].find('cnum')-1].lower()
     bmk_model_path = '.'.join(['benchmark', bmk_name, 'model', option['model']])
     bmk_core_path = '.'.join(['benchmark', bmk_name, 'core'])
     utils.fmodule.device = torch.device('cuda:{}'.format(option['server_gpu_id']) if torch.cuda.is_available() and option['server_gpu_id'] != -1 else 'cpu')
-    # utils.fmodule.device = torch.device('cuda:2')
-
-    # print("Device: ", utils.fmodule.device)
     utils.fmodule.TaskCalculator = getattr(importlib.import_module(bmk_core_path), 'TaskCalculator')
     utils.fmodule.TaskCalculator.setOP(getattr(importlib.import_module('torch.optim'), option['optimizer']))
     utils.fmodule.Model = getattr(importlib.import_module(bmk_model_path), 'Model')
     task_reader = getattr(importlib.import_module(bmk_core_path), 'TaskReader')(taskpath=os.path.join('fedtask', option['task']))
-    train_and_valid_data, test_data = task_reader.read_data()
-    # print(type(test_data))
-    # print(train_data.keys(), valid_data.keys(), test_data.keys())
-    # num_clients = len(client_names)
-    # print("done")
+    train_datas, valid_datas, test_data, client_names = task_reader.read_data()
+    num_clients = len(client_names)
+    print("done")
 
-    # init client  (these clients will be eliminated later on)
-    print('init clients...')
+    # init client
+    print('init clients...', end='')
     client_path = '%s.%s' % ('algorithm', option['algorithm'])
     Client=getattr(importlib.import_module(client_path), 'Client')
-    clients = [Client(option, name ='', train_data = test_data, valid_data = test_data) for cid in range(option['mean_num_vehicle_clients'])]
+    clients = [Client(option, name = client_names[cid], train_data = train_datas[cid], valid_data = valid_datas[cid]) for cid in range(num_clients)]
     print('done')
 
     # init server
-    print("init server...")
+    print("init server...", end='')
     server_path = '%s.%s' % ('algorithm', option['algorithm'])
-    print(utils.fmodule.device)
-    server = getattr(importlib.import_module(server_path), 'Server')(option, utils.fmodule.Model().to(utils.fmodule.device), 
-                                                                     clients = clients,
-                                                                     train_and_valid_data = train_and_valid_data,test_data = test_data)
-    # print('done')
-    return server
+    server = getattr(importlib.import_module(server_path), 'Server')(option, utils.fmodule.Model().to(utils.fmodule.device), clients, test_data = test_data)
+    print('done')
+    return server    # print('done')
 
 def output_filename(option, server):
     header = "{}_".format(option["algorithm"])

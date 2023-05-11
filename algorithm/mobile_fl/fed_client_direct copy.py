@@ -13,16 +13,12 @@ from main_mobile import logger
 import os
 from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
-import torch
+
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,train_and_valid_data,test_data = None, clients = []):
         super(CloudServer, self).__init__( option, model,train_and_valid_data,test_data, clients )
         self.initialize()
-        # self.print_clients_info()
-        # self.print_edges_info()
-        self.unused_clients_queue = []
-        print("Done with initialization")
 
 
     def run(self):
@@ -67,41 +63,19 @@ class CloudServer(BasicCloudServer):
         # print("Selected clients", self.selected_clients)
         # print("Done sampling")
         # training
-
-
-        # first, aggregate the edges with their clients
-        for edge in self.edges:
-            aggregated_clients = []
-            for client in self.selected_clients:
-                if client.name in self.client_edge_mapping[edge.name]:
-                    aggregated_clients.append(client)
-            if len(aggregated_clients) > 0:
-                aggregated_clients_models , _= edge.communicate(aggregated_clients)
-                p = []
-                for client in aggregated_clients:
-                    client_weight = max(0.75 + client.rounds_since_last_changed * 0.05,1)
-                    p.append(client_weight)
-
-                edge.model =  self.aggregate(aggregated_clients_models, p = p)
-        # models, train_losses = self.communicate(self.edges)
-
+        models, train_losses = self.communicate(self.selected_clients)
         # print("Done a training step")
         # check whether all the clients have dropped out, because the dropped clients will be deleted from self.selected_clients
         if not self.selected_clients: return
         # aggregate: pk = 1/K as default where K=len(selected_clients)
-        # models = [edge.model for edge in self.edges]
-        if t % self.edge_update_frequency == 0:
-            models = [edge.model for edge in self.edges]
-            self.model = self.aggregate(models, p = [1.0  for cid in range(len(self.edges))])
-
-            for edge in self.edges:
-                edge.model = copy.deepcopy(self.model)
+        sum_datavol = sum( [client.datavol for client in self.selected_clients])
+        agg_weights = [client.datavol /sum_datavol for client in self.selected_clients]
+        self.model = self.aggregate(models, p = agg_weights)
 
 
+    
 
-
-
-    def communicate(self, edges):
+    def communicate(self, selected_clients):
         """
         The whole simulating communication procedure with the selected clients.
         This part supports for simulating the client dropping out.
@@ -110,25 +84,27 @@ class CloudServer(BasicCloudServer):
         :return
             :the unpacked response from clients that is created ny self.unpack()
         """
-        packages_received_from_edges = []
+        packages_received_from_clients = []
         if self.num_threads <= 1:
             # computing iteratively
-            for edge in edges:
-                response_from_edge = self.communicate_with(edge)
-                packages_received_from_edges.append(response_from_edge)
+            print("Computing iteratively")
+            for client_id in tqdm(selected_clients):
+                response_from_client_id = self.communicate_with(client_id)
+                packages_received_from_clients.append(response_from_client_id)
     
         else:
             # computing in parallel
-            pool = ThreadPool(min(self.num_threads, len(edges)))
-            packages_received_from_edges = pool.map(self.communicate_with, edges)
+            print("Computing in parallel")
+            pool = ThreadPool(min(self.num_threads, len(selected_clients)))
+            packages_received_from_clients = pool.map(self.communicate_with, selected_clients)
             pool.close()
             pool.join()
         # count the clients not dropping
-        # self.selected_clients = [selected_clients[i] for i in range(len(selected_clients)) if packages_received_from_clients[i]]
-        # packages_received_from_edges = [pi for pi in packages_received_from_clients if pi]
-        return self.unpack(packages_received_from_edges)
+        self.selected_clients = [selected_clients[i] for i in range(len(selected_clients)) if packages_received_from_clients[i]]
+        packages_received_from_clients = [pi for pi in packages_received_from_clients if pi]
+        return self.unpack(packages_received_from_clients)
 
-    def communicate_with(self, edge):
+    def communicate_with(self, client):
         """
         Pack the information that is needed for client_id to improve the global model
         :param
@@ -141,7 +117,7 @@ class CloudServer(BasicCloudServer):
 
         # listen for the client's response and return None if the client drops out
         # if self.clients[client_id].is_drop(): return None
-        reply = edge.reply(svr_pkg)
+        reply = client.reply(svr_pkg)
         return reply
 
     def pack(self):
@@ -171,6 +147,7 @@ class CloudServer(BasicCloudServer):
         # collect all the active clients at this round and wait for at least one client is active and
         active_clients = []
         active_clients = self.clients
+        self.clients_per_round = self.current_num_clients
         # while(len(active_clients)<1):
         #     active_clients = [cid for cid in range(self.num_clients) if self.clients[cid].is_active()]
         # print("DOne collect all the active clients")
@@ -188,31 +165,6 @@ class CloudServer(BasicCloudServer):
         selected_clients = list(set(active_clients).intersection(selected_clients))
         return selected_clients
 
-
-
-    def create_clients(self, num_clients):
-        locations = np.random.randint( self.left_road_limit, self.right_road_limit, size = num_clients)
-        if self.option['mean_velocity'] != 0:
-            velocities = np.random.randint( - (self.mean_velocity + self.std_velocity), self.mean_velocity + self.std_velocity, size = num_clients)
-        else:
-            velocities = np.array([0 for i in range(num_clients)])
-        name_lists = ['c' + str(client_id) for client_id in range(num_clients)]
-        if self.option['sample_with_replacement']:
-            client_data_lists = self.sample_data_with_replacement(num_clients=num_clients)
-        else:
-            client_data_lists = self.sample_data_without_replacement(num_clients=num_clients)
-
-        new_clients = []
-        for i in range(num_clients):
-            client_train_data, client_valid_data = client_data_lists[i]
-            client = MobileClient(self.option, location=locations[i], velocity=velocities[i], name=name_lists[i], 
-                                  train_data=client_train_data, valid_data = client_valid_data)
-            new_clients.append(client)
-        
-        return new_clients
-    
-    def initialize_clients(self):
-        self.clients = self.create_clients(self.current_num_clients)
     
         
 
@@ -299,47 +251,8 @@ class CloudServer(BasicCloudServer):
     
         
         return client_data_lists
-
-    def global_update_location(self):
-        new_client_list = []
-        for client in self.clients:
-            client.update_location()
-            new_client_list.append(client)
-        self.clients = new_client_list
-
     
-    def update_client_list(self):
-        filtered_client_list = []
-        filtered = 0
-        for client in self.clients:
-            if self.left_road_limit <= client.location <= self.right_road_limit:
-                filtered_client_list.append(client)
-            else:
-                self.unused_clients_queue.append(client)
-                filtered +=1
-        # print("Number of filtered clients",filtered)
-        self.clients = filtered_client_list
-        if len(self.clients) < self.mean_num_clients - self.std_num_clients:
-            self.current_num_clients = np.random.randint(low = self.mean_num_clients - self.std_num_clients, high=self.mean_num_clients+self.std_num_clients + 1,
-                                                        size=1)[0]
-            num_clients_to_readd = self.current_num_clients - len(self.clients)
-            if num_clients_to_readd < len(self.unused_clients_queue):
-                clients_to_readd = random.sample(self.unused_clients_queue, k = num_clients_to_readd)
-                self.clients.extend(clients_to_readd)
-            else:
-                self.clients.extend(self.unused_clients_queue)
-
-        
-        self.unused_clients_queue = list(set(self.unused_clients_queue) - set(self.clients))
-        print("Number of unused clients", len(self.unused_clients_queue))
-
-
-
-            # self.sample_new_clients(num_new_clients=self.current_num_clients - len(filtered_client_list))
-     
-
-
-
+    
     def initialize_edges(self):
         cover_areas = [(self.left_road_limit + int(self.road_distance / self.num_edges) * i,
                          self.left_road_limit + int(self.road_distance / self.num_edges) * (i+1)) for i in range(self.num_edges)  ]
@@ -349,7 +262,9 @@ class CloudServer(BasicCloudServer):
             edge = EdgeServer(self.option, model = copy.deepcopy(self.model)
                               , cover_area=cover_areas[i], name=name_lists[i], test_data = None)
             self.edges.append(edge)
-    
+
+
+     
     def print_edges_info(self):
         print("Current number of edges: ", self.num_edges)
         for edge in self.edges:
@@ -357,168 +272,24 @@ class CloudServer(BasicCloudServer):
 
 
 
-    def assign_client_to_server(self):
-        client_buffer = self.clients.copy()
-        for edge in self.edges:
-            edge_area = edge.cover_area
-            edge_name = edge.name
-            if edge not in self.client_edge_mapping:
-                self.client_edge_mapping[edge_name] = []
-            for client in client_buffer:
-                if edge_area[0] <= client.location <= edge_area[1]:
-                    self.client_edge_mapping[edge_name].append(client.name)
-                    if client.edge_name == edge_name:
-                        client.rounds_since_last_changed +=1
-                    else:
-                        client.rounds_since_last_changed = 0
-                        client.edge_name = edge_name
-        
-        self.clients = client_buffer
-        
-        # print(self.client_edge_mapping)
 
-
-
-    def initialize(self):
-        self.initialize_clients()
-        self.initialize_edges()
-        self.assign_client_to_server()
 
 
 class EdgeServer(BasicEdgeServer):
-    def __init__(self, option,model,cover_area, name = '', clients = [], test_data=None):
-        super(EdgeServer, self).__init__(option,model,cover_area, name , clients , test_data)
+    def __init__(self, option, cover_area,  name='', train_data=None, valid_data=None):
+        super(EdgeServer, self).__init__(option, cover_area,  name, train_data, valid_data)
 
     def print_edge_info(self):
         print('Edge {} - cover area: {}'.format(self.name,self.cover_area))
 
-    def communicate(self, clients):
-        """
-        The whole simulating communication procedure with the selected clients.
-        This part supports for simulating the client dropping out.
-        :param
-            selected_clients: the clients to communicate with
-        :return
-            :the unpacked response from clients that is created ny self.unpack()
-        """
-        packages_received_from_clients = []
-        if self.num_threads <= 1:
-            # computing iteratively
-            for client in clients:
-                response_from_edge = self.communicate_with(client)
-                packages_received_from_clients.append(response_from_edge)
-    
-        else:
-            # computing in parallel
-            pool = ThreadPool(min(self.num_threads, len(clients)))
-            packages_received_from_clients = pool.map(self.communicate_with,clients)
-            pool.close()
-            pool.join()
-        # count the clients not dropping
-        # self.selected_clients = [selected_clients[i] for i in range(len(selected_clients)) if packages_received_from_clients[i]]
-        # packages_received_from_edges = [pi for pi in packages_received_from_clients if pi]
-        return self.unpack(packages_received_from_clients)
-
-    def communicate_with(self, client):
-        """
-        Pack the information that is needed for client_id to improve the global model
-        :param
-            client: the client to communicate with
-        :return
-            client_package: the reply from the client and will be 'None' if losing connection
-        """
-        # package the necessary information
-        edge_pkg = self.pack()
-        # print(svr_pkg)
-        # listen for the client's response and return None if the client drops out
-        # if self.clients[client_id].is_drop(): return None
-        reply = client.reply(edge_pkg)
-        return reply
-
-    def pack(self):
-        """
-        Pack the necessary information for the client's local training.
-        Any operations of compression or encryption should be done here.
-        :param
-            client_id: the id of the client to communicate with
-        :return
-            a dict that only contains the global model as default.
-        """
-        return {
-            "model" : copy.deepcopy(self.model),
-        }
-
-    def unpack_svr(self, received_pkg):
-        """
-        Unpack the package received from the cloud server
-        :param
-            received_pkg: a dict contains the global model as default
-        :return:
-            the unpacked information that can be rewritten
-        """
-        # unpack the received package
-        return received_pkg['model']
-
-    def reply(self, svr_pkg):
-        """
-        Reply to server with the transmitted package.
-        The whole local procedure should be planned here.
-        The standard form consists of three procedure:
-        unpacking the server_package to obtain the global model,
-        training the global model, and finally packing the improved
-        model into client_package.
-        :param
-            svr_pkg: the package received from the server
-        :return:
-            client_pkg: the package to be send to the server
-        """
-        # print("In reply function of client")
-        # print(svr_pkg)
-        model = self.unpack_svr(svr_pkg)
-        # print("CLient unpacked to package")
-        # loss = self.train_loss(model)
-        loss = 0
-        # print("Client evaluated the train losss")
-        self.train(model)
-        # print("Client trained the model")
-        cpkg = self.pack(model, loss)
-        # print("Client packed and finished")
-        return cpkg
-
-
 class MobileClient(BasicMobileClient):
-    def __init__(self, option, location,  velocity, name='', train_data=None, valid_data=None):
+    def __init__(self, option, location = 0,  velocity = 0, name='', train_data=None, valid_data=None):
         super(MobileClient, self).__init__(option, location,  name, train_data, valid_data)
         self.velocity = velocity
-        self.edge_name = None
-        self.rounds_since_last_changed = -1
-        self.mu = option['mu']
-
+    
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
     
     def update_location(self):
         self.location += self.velocity
-
-    # def train(self, model):
-    #     # global parameters
-    #     src_model = copy.deepcopy(model)
-    #     src_model.freeze_grad()
-    #     model.train()
-    #     data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
-    #     optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
-    #     for iter in range(self.epochs):
-    #         for batch_idx, batch_data in enumerate(data_loader):
-    #             model.zero_grad()
-    #             original_loss = self.calculator.get_loss(model, batch_data)
-    #             # proximal term
-    #             loss_proximal = 0
-    #             for pm, ps in zip(model.parameters(), src_model.parameters()):
-    #                 loss_proximal += torch.sum(torch.pow(pm-ps,2))
-    #             loss = original_loss + 0.5 * self.mu * loss_proximal                #
-    #             loss.backward()
-    #             optimizer.step()
-    #     return
-
-
