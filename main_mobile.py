@@ -29,29 +29,29 @@ class MyLogger(flw.Logger):
             test_metric, test_loss = server.test(device=torch.device('cuda:0'))
         else:
             test_metric, test_loss = server.test()
-        valid_metrics, valid_losses = server.test_on_clients(self.current_round, 'valid')
-        train_metrics, train_losses = server.test_on_clients(self.current_round, 'train')
+        # valid_metrics, valid_losses = server.test_on_clients(self.current_round, 'valid')
+        # train_metrics, train_losses = server.test_on_clients(self.current_round, 'train')
 
         # print(len(valid_metrics), len(valid_losses))
         # print(len(train_metrics), len(train_losses))
 
-        self.output['train_losses'].append(1.0*sum([closs for closs in train_losses])/len([closs for closs in train_losses]))
-        self.output['valid_losses'].append(1.0*sum([closs for closs in valid_losses])/len([closs for closs in valid_losses]))
-        self.output['train_accs'].append(sum(train_metrics) / len(train_metrics) )
-        self.output['valid_accs'].append(sum(valid_metrics) / len(valid_metrics))
+        self.output['train_losses'] = server.client_train_losses
+        self.output['valid_losses'] = server.client_valid_losses
+        self.output['train_accs'] = server.client_train_metrics
+        self.output['valid_accs'] = server.client_valid_metrics
         self.output['test_accs'].append(test_metric)
         self.output['test_losses'].append(test_loss)
-        self.output['mean_valid_accs'].append(sum([acc for acc in valid_metrics]) / len([acc for acc in valid_metrics]))        
-        self.output['mean_curve'].append(np.mean(valid_metrics))
-        self.output['var_curve'].append(np.std(valid_metrics))
+        # self.output['mean_valid_accs'].append(sum([acc for acc in valid_metrics]) / len([acc for acc in valid_metrics]))        
+        # self.output['mean_curve'].append(np.mean(valid_metrics))
+        # self.output['var_curve'].append(np.std(valid_metrics))
         # for cid in range(server.num_clients):
         #     self.output['client_accs'][server.clients[cid].name]=[self.output['valid_accs'][i][cid] for i in range(len(self.output['valid_accs']))]
         print(self.temp.format("Training Loss:", self.output['train_losses'][-1]))
+        print(self.temp.format("Validation Loss:", self.output['valid_losses'][-1]))
         print(self.temp.format("Testing Loss:", self.output['test_losses'][-1]))
+        print(self.temp.format("Training Accuracy:", self.output['train_accs'][-1]))
+        print(self.temp.format("Validating Accuracy:", self.output['valid_accs'][-1]))
         print(self.temp.format("Testing Accuracy:", self.output['test_accs'][-1]))
-        print(self.temp.format("Validating Accuracy:", self.output['mean_valid_accs'][-1]))
-        print(self.temp.format("Mean of Client Accuracy:", self.output['mean_curve'][-1]))
-        print(self.temp.format("Std of Client Accuracy:", self.output['var_curve'][-1]))
 
         # dataset = server['task']
         if not os.path.exists('results/{}'.format(server.option['task'])):
@@ -73,7 +73,7 @@ class MyLogger(flw.Logger):
         experiment_df['test_loss'] = self.output['test_losses']
         experiment_df['train_loss'] = self.output['train_losses']
         experiment_df['val_loss'] = self.output['valid_losses']
-        experiment_df['val_acc'] = self.output['mean_valid_accs']
+        experiment_df['val_acc'] = self.output['valid_accs']
         experiment_df['train_acc'] =  self.output['train_accs']
 
 

@@ -72,18 +72,39 @@ class CloudServer(BasicCloudServer):
         # first, aggregate the edges with their clientss
         # for client in self.selected_clients:
         #     client.print_client_info()
+        all_client_train_losses = []
+        all_client_valid_losses = []
+        all_client_train_metrics = []
+        all_client_valid_metrics = []
+
         for edge in self.edges:
             aggregated_clients = []
             for client in self.selected_clients:
                 if client.name in self.client_edge_mapping[edge.name]:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
-                aggregated_clients_models , _= edge.communicate(aggregated_clients)
+                print(edge.communicate(aggregated_clients))
+                aggregated_clients_models , (agg_clients_train_losses, 
+                                             agg_clients_valid_losses, 
+                                             agg_clients_train_accs, 
+                                             agg_clients_valid_accs)= edge.communicate(aggregated_clients)
+                
                 edge_total_datavol = sum([client.datavol for client in aggregated_clients])
                 edge.total_datavol = edge_total_datavol
                 aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
                 # print(len(aggregation_weights), len(aggregated_clients_models))
                 edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
+
+                all_client_train_losses.extend(agg_clients_train_losses)
+                all_client_valid_losses.extend(agg_clients_valid_losses)
+                all_client_train_metrics.extend(agg_clients_train_accs)
+                all_client_valid_metrics.extend(agg_clients_valid_accs)
+        
+        self.client_train_losses.append(sum(all_client_train_losses) / len(all_client_train_losses))
+        self.client_valid_losses.append(sum(all_client_valid_losses) / len(all_client_valid_losses))
+        self.client_train_metrics.append(sum(all_client_train_metrics) / len(all_client_train_metrics))
+        self.client_valid_metrics.append(sum(all_client_valid_metrics) / len(all_client_valid_metrics))
+
             # else:
             #     print('No aggregated clients')
         # models, train_losses = self.communicate(self.edges)
