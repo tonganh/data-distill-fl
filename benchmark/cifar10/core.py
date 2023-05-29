@@ -25,7 +25,7 @@ class TaskGen(DefaultTaskGen):
         self.test_data = {'x': test_x, 'y': test_y}
         return
 
-class TaskReader(WholeTaskReader):
+class TaskReader(XYTaskReader):
     def __init__(self, taskpath=''):
         super(TaskReader, self).__init__(taskpath)
 

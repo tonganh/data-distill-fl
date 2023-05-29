@@ -35,8 +35,8 @@ class MyLogger(flw.Logger):
         self.output['mean_valid_accs'].append(1.0*sum([ck * acc for ck, acc in zip(server.client_vols, valid_metrics)])/server.data_vol)
         self.output['mean_curve'].append(np.mean(valid_metrics))
         self.output['var_curve'].append(np.std(valid_metrics))
-        for cid in range(server.num_clients):
-            self.output['client_accs'][server.clients[cid].name]=[self.output['valid_accs'][i][cid] for i in range(len(self.output['valid_accs']))]
+        # for cid in range(server.num_clients):
+        #     self.output['client_accs'][server.clients[cid].name]=[self.output['valid_accs'][i][cid] for i in range(len(self.output['valid_accs']))]
         print(self.temp.format("Training Loss:", self.output['train_losses'][-1]))
         print(self.temp.format("Testing Loss:", self.output['test_losses'][-1]))
         print(self.temp.format("Testing Accuracy:", self.output['test_accs'][-1]))

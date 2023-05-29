@@ -80,10 +80,11 @@ class CloudServer(BasicCloudServer):
         for edge in self.edges:
             aggregated_clients = []
             for client in self.selected_clients:
+                print(client.train_data)
                 if client.name in self.client_edge_mapping[edge.name]:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
-                print(edge.communicate(aggregated_clients))
+                # print(edge.communicate(aggregated_clients))
                 aggregated_clients_models , (agg_clients_train_losses, 
                                              agg_clients_valid_losses, 
                                              agg_clients_train_accs, 
@@ -126,7 +127,7 @@ class CloudServer(BasicCloudServer):
         edges_models_list = []
         for edge in self.edges:
                 edges_models_list.append(copy.deepcopy(edge.model))
-        
+     
 
 
 

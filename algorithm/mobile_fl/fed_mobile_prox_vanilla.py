@@ -72,18 +72,39 @@ class CloudServer(BasicCloudServer):
         # first, aggregate the edges with their clientss
         # for client in self.selected_clients:
         #     client.print_client_info()
+        all_client_train_losses = []
+        all_client_valid_losses = []
+        all_client_train_metrics = []
+        all_client_valid_metrics = []
+
         for edge in self.edges:
             aggregated_clients = []
             for client in self.selected_clients:
                 if client.name in self.client_edge_mapping[edge.name]:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
-                aggregated_clients_models , _= edge.communicate(aggregated_clients)
+                # print(edge.communicate(aggregated_clients))
+                aggregated_clients_models , (agg_clients_train_losses, 
+                                             agg_clients_valid_losses, 
+                                             agg_clients_train_accs, 
+                                             agg_clients_valid_accs)= edge.communicate(aggregated_clients)
+                
                 edge_total_datavol = sum([client.datavol for client in aggregated_clients])
                 edge.total_datavol = edge_total_datavol
                 aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
                 # print(len(aggregation_weights), len(aggregated_clients_models))
                 edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
+
+                all_client_train_losses.extend(agg_clients_train_losses)
+                all_client_valid_losses.extend(agg_clients_valid_losses)
+                all_client_train_metrics.extend(agg_clients_train_accs)
+                all_client_valid_metrics.extend(agg_clients_valid_accs)
+        
+        self.client_train_losses.append(sum(all_client_train_losses) / len(all_client_train_losses))
+        self.client_valid_losses.append(sum(all_client_valid_losses) / len(all_client_valid_losses))
+        self.client_train_metrics.append(sum(all_client_train_metrics) / len(all_client_train_metrics))
+        self.client_valid_metrics.append(sum(all_client_valid_metrics) / len(all_client_valid_metrics))
+
             # else:
             #     print('No aggregated clients')
         # models, train_losses = self.communicate(self.edges)
@@ -454,29 +475,33 @@ class MobileClient(BasicMobileClient):
         # self.velocity = velocity
         self.associated_server = None
         self.mu = option['mu']
+        self.model = None
 
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
 
-    def train(self, model):
+    def train(self, edge_model):
         # global parameters
-        src_model = copy.deepcopy(model)
-        src_model.freeze_grad()
-        model.train()
+        src_model = copy.deepcopy(self.model)
+        if src_model != None:
+            src_model.freeze_grad()
+        edge_model.train()
         data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
-        optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+        optimizer = self.calculator.get_optimizer(self.optimizer_name, edge_model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
         for iter in range(self.epochs):
             for batch_idx, batch_data in enumerate(data_loader):
-                model.zero_grad()
-                original_loss = self.calculator.get_loss(model, batch_data)
+                edge_model.zero_grad()
+                original_loss = self.calculator.get_loss(edge_model, batch_data)
                 # proximal term
                 loss_proximal = 0
-                for pm, ps in zip(model.parameters(), src_model.parameters()):
-                    loss_proximal += torch.sum(torch.pow(pm-ps,2))
+                if src_model != None:
+                    for pm, ps in zip(edge_model.parameters(), src_model.parameters()):
+                        loss_proximal += torch.sum(torch.pow(pm-ps,2))
                 loss = original_loss + 0.5 * self.mu * loss_proximal                #
                 loss.backward()
                 optimizer.step()
+        self.model = edge_model
         return
 
 

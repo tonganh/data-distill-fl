@@ -181,9 +181,12 @@ class DefaultTaskGen(BasicTaskGen):
 
         elif self.dist_id == 1:
             """label_skew_quantity"""
+            # print("skewness", self.skewness)
             self.skewness = min(max(0, self.skewness),1.0)
+            print("skewness", self.skewness)
             dpairs = [[did, self.train_data[did][-1]] for did in range(len(self.train_data))]
             num = max(int((1-self.skewness)*self.num_classes), 1)
+            # print("Num: ", num)
             K = self.num_classes
             local_datas = [[] for _ in range(self.num_clients)]
             if num == K:
