@@ -27,7 +27,6 @@ class BasicServer():
         # hyper-parameters during training process
         self.num_rounds = option['num_rounds']
         self.decay_rate = option['learning_rate_decay']
-        self.num_clients = option['num_clients']
         self.clients_per_round = max(int(self.num_clients * option['proportion']), 1)
         self.lr_scheduler_type = option['lr_scheduler']
         self.current_round = -1
@@ -56,7 +55,8 @@ class BasicServer():
             self.global_lr_scheduler(round)
 
             logger.time_end('Time Cost')
-            if logger.check_if_log(round, self.eval_interval): logger.log(self)
+            # if logger.check_if_log(round, self.eval_interval): logger.log(self)
+            logger.log(self)
 
         print("=================End==================")
         logger.time_end('Total Time Cost')
@@ -180,7 +180,9 @@ class BasicServer():
         :return
             a list of the ids of the selected clients
         """
+
         all_clients = [cid for cid in range(self.num_clients)]
+        # print(self.num_clients)
         selected_clients = []
         # collect all the active clients at this round and wait for at least one client is active and
         active_clients = []

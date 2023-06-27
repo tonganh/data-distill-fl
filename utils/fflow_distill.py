@@ -22,10 +22,10 @@ def read_option():
 
     # methods of server side for sampling and aggregating
     parser.add_argument('--sample', help='methods for sampling clients', type=str, choices=sample_list, default='uniform')
-    parser.add_argument('--aggregate', help='methods for aggregating models', type=str, choices=agg_list, default='none')
-    parser.add_argument('--learning_rate_decay', help='learning rate decay for the training process;', type=float, default=0.998)
+    parser.add_argument('--aggregate', help='methods for aggregating models', type=str, choices=agg_list, default='uniform')
+    parser.add_argument('--learning_rate_decay', help='learning rate decay for the training process;', type=float, default=0.99)
     parser.add_argument('--weight_decay', help='weight decay for the training process', type=float, default=0)
-    parser.add_argument('--lr_scheduler', help='type of the global learning rate scheduler', type=int, default=-1)
+    parser.add_argument('--lr_scheduler', help='type of the global learning rate scheduler', type=int, default=0)
     # hyper-parameters of training in server side
     parser.add_argument('--num_rounds', help='number of communication rounds', type=int, default=20)
     parser.add_argument('--proportion', help='proportion of clients sampled per round', type=float, default=0.2)
@@ -60,19 +60,32 @@ def read_option():
     parser.add_argument('--alpha', help='proportion of clients keeping original direction in FedFV/alpha in fedFA', type=float, default='0.0')
     parser.add_argument('--beta', help='beta in FedFA',type=float, default='1.0')
     parser.add_argument('--gamma', help='gamma in FedFA', type=float, default='0')
-    parser.add_argument('--mu', help='mu in fedprox', type=float, default='0.1')
+    parser.add_argument('--mu', help='mu in fedprox', type=float, default='0.2')
     
-    # server gpu
     parser.add_argument('--server_gpu_id', help='server process on this gpu', type=int, default=0)
-    
+
+    parser.add_argument('--client_valid_ratio', help='client_valid_ratio', type=float, default=0.25)
 
     # args for moving fed
-    parser.add_argument('--mean_num_vehicle_clients', help='Mean number of vehicle clients on the road', type=int, default=100)
-    parser.add_argument('--std_num_vehicle_clients', help='Standard deviation number of vehicle clients on the road', type=int, default=5)
-    parser.add_argument('--mean_velocity', help='Mean velocity of vehicle clients on the road (km/round)', type=int, default=40)
+    parser.add_argument('--num_clients', help='Mean number of vehicle clients on the road', type=int, default=60)
+    parser.add_argument('--mean_num_clients', help='Mean number of vehicle clients on the road', type=int, default=50)
+    parser.add_argument('--std_num_clients', help='Standard deviation number of vehicle clients on the road', type=int, default=25)
+    
+    parser.add_argument('--mean_velocity', help='Mean velocity of vehicle clients on the road (km/round)', type=int, default=100)
     parser.add_argument('--std_velocity', help='Standard deviation of velocity of vehicle clients on the road', type=int, default=20)
+    
     parser.add_argument('--num_edges', help='Number of edge servers on the road', type=int, default=10)
-    parser.add_argument('--road_length', help='The length of the road',type=int, default=1000)
+    parser.add_argument('--road_distance', help='The length of the road',type=float, default=1000)
+
+    parser.add_argument('--edge_update_frequency', help='Edge update frequency', type=int, default=1)
+    parser.add_argument('--sample_with_replacement', help='Sample with replacement or not', type=int, default=0)
+
+    parser.add_argument('--distill_data_path', help='path to save the distilled data', type=str, default=f'distill_data/')
+    parser.add_argument('--distill_ipc', help='Number of images per class to distill on each clients', type=int,default=1)
+    parser.add_argument('--distill_iters', help='Number of data distillation iterations', type=int,default=300)
+    parser.add_argument('--distill_before_train', help='Choose to distill before training or not', type=bool,default=False)
+    parser.add_argument('--kip_support_size', help='Size of distill dataset if using KIP', type=int,default=50)
+
 
     try: option = vars(parser.parse_args())
     except IOError as msg: parser.error(str(msg))
@@ -87,35 +100,35 @@ def setup_seed(seed):
 
 def initialize(option):
     # init fedtask
+    # init fedtask
     print("init fedtask...", end='')
     # dynamical initializing the configuration with the benchmark
     bmk_name = option['task'][:option['task'].find('cnum')-1].lower()
     bmk_model_path = '.'.join(['benchmark', bmk_name, 'model', option['model']])
     bmk_core_path = '.'.join(['benchmark', bmk_name, 'core'])
     utils.fmodule.device = torch.device('cuda:{}'.format(option['server_gpu_id']) if torch.cuda.is_available() and option['server_gpu_id'] != -1 else 'cpu')
-    
-    """
-    TaskCalculator: 
-    """
     utils.fmodule.TaskCalculator = getattr(importlib.import_module(bmk_core_path), 'TaskCalculator')
     utils.fmodule.TaskCalculator.setOP(getattr(importlib.import_module('torch.optim'), option['optimizer']))
     utils.fmodule.Model = getattr(importlib.import_module(bmk_model_path), 'Model')
     task_reader = getattr(importlib.import_module(bmk_core_path), 'TaskReader')(taskpath=os.path.join('fedtask', option['task']))
+    print(task_reader)
     train_datas, valid_datas, test_data, client_names = task_reader.read_data()
     num_clients = len(client_names)
     print("done")
 
     # init client
     print('init clients...', end='')
-    client_path = '%s.%s' % ('algorithm', option['algorithm'])
-    Client=getattr(importlib.import_module(client_path), 'Client')
+    client_path = '%s.%s' % ('algorithm.distill_fl', option['algorithm'])
+    Client=getattr(importlib.import_module(client_path), 'MobileClient')
     clients = [Client(option, name = client_names[cid], train_data = train_datas[cid], valid_data = valid_datas[cid]) for cid in range(num_clients)]
     print('done')
 
+    # print("Clients", clients)
+
     # init server
     print("init server...", end='')
-    server_path = '%s.%s' % ('algorithm', option['algorithm'])
-    server = getattr(importlib.import_module(server_path), 'Server')(option, utils.fmodule.Model().to(utils.fmodule.device), clients, test_data = test_data)
+    server_path = '%s.%s' % ('algorithm.distill_fl', option['algorithm'])
+    server = getattr(importlib.import_module(server_path), 'CloudServer')(option, utils.fmodule.Model().to(utils.fmodule.device), clients = clients, test_data = test_data)
     print('done')
     return server    # print('done')
 

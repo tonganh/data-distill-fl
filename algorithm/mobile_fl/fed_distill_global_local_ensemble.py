@@ -15,7 +15,9 @@ from main_mobile import logger
 import os
 from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
-from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
+from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data, SoftTargetDistillLoss
+import torch.nn as nn
+
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,clients,test_data = None):
@@ -66,8 +68,8 @@ class CloudServer(BasicCloudServer):
         self.assign_client_to_server()
         # print("Done assigning client to sercer")
 
-        self.selected_clients = self.sample()
-        print("Selected clients", len(self.selected_clients))
+        self.selected_clients = self.clients
+        # print("Selected clients", [client.name for client in self.selected_clients])
 
         # first, aggregate the edges with their clientss
         # for client in self.selected_clients:
@@ -78,16 +80,26 @@ class CloudServer(BasicCloudServer):
         all_client_valid_metrics = []
 
         for edge in self.edges:
+
+            # print(f"Edge: {edge.name} - clients {self.client_edge_mapping[edge.name]}" )
+            clients_chosen_in_edge =     list(np.random.choice(self.client_edge_mapping[edge.name],
+                                                               int(len(self.client_edge_mapping[edge.name]) * self.option['proportion']), replace=False))
+
+            # print(f"Edge: {edge.name} - clients {clients_chosen_in_edge}" )
+
+
             aggregated_clients = []
             for client in self.selected_clients:
-                if client.name in self.client_edge_mapping[edge.name]:
+                if client.name in clients_chosen_in_edge:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
+                # print(aggregated_clients)
                 # print(edge.communicate(aggregated_clients))
+                global_model  =copy.deepcopy(self.model)
                 aggregated_clients_models , (agg_clients_train_losses, 
                                              agg_clients_valid_losses, 
                                              agg_clients_train_accs, 
-                                             agg_clients_valid_accs)= edge.communicate(aggregated_clients)
+                                             agg_clients_valid_accs)= edge.communicate(aggregated_clients,global_model )
                 
                 edge_total_datavol = sum([client.datavol for client in aggregated_clients])
                 edge.total_datavol = edge_total_datavol
@@ -126,6 +138,7 @@ class CloudServer(BasicCloudServer):
         edges_models_list = []
         for edge in self.edges:
                 edges_models_list.append(copy.deepcopy(edge.model))
+     
         
 
 
@@ -376,7 +389,7 @@ class EdgeServer(BasicEdgeServer):
     def print_edge_info(self):
         print('Edge {} - cover area: {}'.format(self.name,self.cover_area))
 
-    def communicate(self, clients):
+    def communicate(self, clients, global_model):
         """
         The whole simulating communication procedure with the selected clients.
         This part supports for simulating the client dropping out.
@@ -389,7 +402,7 @@ class EdgeServer(BasicEdgeServer):
         if self.num_threads <= 1:
             # computing iteratively
             for client in clients:
-                response_from_edge = self.communicate_with(client)
+                response_from_edge = self.communicate_with(client, global_model)
                 packages_received_from_clients.append(response_from_edge)
     
         else:
@@ -403,7 +416,7 @@ class EdgeServer(BasicEdgeServer):
         # packages_received_from_edges = [pi for pi in packages_received_from_clients if pi]
         return self.unpack(packages_received_from_clients)
 
-    def communicate_with(self, client):
+    def communicate_with(self, client, global_model):
         """
         Pack the information that is needed for client_id to improve the global model
         :param
@@ -412,13 +425,13 @@ class EdgeServer(BasicEdgeServer):
             client_package: the reply from the client and will be 'None' if losing connection
         """
         # package the necessary information
-        edge_pkg = self.pack()
+        edge_pkg = self.pack(global_model)
         # listen for the client's response and return None if the client drops out
         # if self.clients[client_id].is_drop(): return None
         reply = client.reply(edge_pkg)
         return reply
 
-    def pack(self):
+    def pack(self, global_model):
         """
         Pack the necessary information for the client's local training.
         Any operations of compression or encryption should be done here.
@@ -428,7 +441,8 @@ class EdgeServer(BasicEdgeServer):
             a dict that only contains the global model as default.
         """
         return {
-            "model" : copy.deepcopy(self.model),
+            "edge_model" : copy.deepcopy(self.model),
+            "global_model" : copy.deepcopy(global_model),
         }
 
     def unpack_svr(self, received_pkg):
@@ -473,13 +487,112 @@ class MobileClient(BasicMobileClient):
     def __init__(self, option, location = 0,  velocity = 0, name='', train_data=None, valid_data=None):
         super(MobileClient, self).__init__(option, location, velocity,  name, train_data, valid_data)
         # self.velocity = velocity
-        self.option = option 
         self.associated_server = None
-    
+        self.mu = option['mu']
+        self.T  = option['distill_temperature']
+        self.model = None
+
+        # self.distill_loss = SoftTargetDistillLoss(self.T)
+        self.distill_loss = nn.MSELoss()
+        self.alpha = option['distill_alpha']
+        self.option = option
+
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
 
-    def update_location(self):
-        # self.location += self.velocity
-        self.location  = np.random.randint(low=-self.option['road_distance']//2, high = self.option['road_distance']//2, size = 1)[0]
+    def unpack(self, received_pkg):
+        """
+        Unpack the package received from the server
+        :param
+            received_pkg: a dict contains the global model as default
+        :return:
+            the unpacked information that can be rewritten
+        """
+        # unpack the received package
+        return received_pkg['edge_model'], received_pkg['global_model']
+
+    def reply(self, svr_pkg):
+        """
+        Reply to server with the transmitted package.
+        The whole local procedure should be planned here.
+        The standard form consists of three procedure:
+        unpacking the server_package to obtain the global model,
+        training the global model, and finally packing the improved
+        model into client_package.
+        :param
+            svr_pkg: the package received from the server
+        :return:
+            client_pkg: the package to be send to the server
+        """
+        # print("In reply function of client")
+        edge_model, global_model = self.unpack(svr_pkg)
+        # print("CLient unpacked to package")
+        train_loss = self.train_loss(edge_model)
+        valid_loss = self.valid_loss(edge_model)
+        train_acc = self.train_metrics(edge_model)
+        valid_acc = self.valid_metrics(edge_model)
+
+        # print("Client evaluated the train losss")
+        self.train(edge_model,global_model)
+        # print("Client trained the model")
+        eval_dict = {'train_loss': train_loss, 
+                      'valid_loss': valid_loss,
+                      'train_acc':train_acc,
+                      'valid_acc': valid_acc}
+        cpkg = self.pack(edge_model, eval_dict)
+        # print("Client packed and finished")
+        return cpkg
+
+    def train(self, edge_model, global_model):
+        # global parameters
+        teacher_model = fmodule._model_average([global_model, edge_model])
+        if teacher_model != None:
+            teacher_model.freeze_grad()
+        edge_model.train()
+
+        data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
+        optimizer = self.calculator.get_optimizer(self.optimizer_name, edge_model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+
+        for iter in range(self.epochs):
+            for batch_idx, batch_data in enumerate(data_loader):
+                edge_model.zero_grad()
+
+                if teacher_model != None:
+                    tdata = self.calculator.data_to_device(batch_data)
+                    input, target = tdata[0], tdata[1].type(torch.LongTensor)
+                    # target = target.to(self.device)
+
+                    output_edge_model = edge_model(input)
+                    output_prev_client_model = teacher_model(input)
+                    distill_loss = self.distill_loss(output_edge_model, output_prev_client_model)
+                    original_loss = self.calculator.get_loss(edge_model, batch_data)
+                    loss = self.alpha * distill_loss + (1-self.alpha) * original_loss
+                
+                else:
+                    loss = self.calculator.get_loss(edge_model, batch_data)
+
+                loss.backward()
+                optimizer.step()
+        
+        self.model = copy.deepcopy(edge_model)
+
+        # src_model = copy.deepcopy(edge_model)
+        # src_model.freeze_grad()
+        # edge_model.train()
+        # data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
+        # optimizer = self.calculator.get_optimizer(self.optimizer_name, edge_model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+        # for iter in range(self.epochs):
+        #     for batch_idx, batch_data in enumerate(data_loader):
+        #         edge_model.zero_grad()
+        #         original_loss = self.calculator.get_loss(edge_model, batch_data)
+        #         # proximal term
+        #         loss_proximal = 0
+        #         for pm, ps in zip(edge_model.parameters(), src_model.parameters()):
+        #             loss_proximal += torch.sum(torch.pow(pm-ps,2))
+        #         loss = original_loss + 0.5 * self.mu * loss_proximal                #
+        #         loss.backward()
+        #         optimizer.step()
+        return
+
+

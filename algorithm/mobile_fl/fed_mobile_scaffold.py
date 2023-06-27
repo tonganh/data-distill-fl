@@ -80,6 +80,7 @@ class CloudServer(BasicCloudServer):
         for edge in self.edges:
             aggregated_clients = []
             for client in self.selected_clients:
+                print(client.train_data)
                 if client.name in self.client_edge_mapping[edge.name]:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
@@ -126,10 +127,6 @@ class CloudServer(BasicCloudServer):
         edges_models_list = []
         for edge in self.edges:
                 edges_models_list.append(copy.deepcopy(edge.model))
-        
-
-
-
 
 
     def communicate(self, edges):
@@ -473,13 +470,9 @@ class MobileClient(BasicMobileClient):
     def __init__(self, option, location = 0,  velocity = 0, name='', train_data=None, valid_data=None):
         super(MobileClient, self).__init__(option, location, velocity,  name, train_data, valid_data)
         # self.velocity = velocity
-        self.option = option 
         self.associated_server = None
     
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
-
-    def update_location(self):
-        # self.location += self.velocity
-        self.location  = np.random.randint(low=-self.option['road_distance']//2, high = self.option['road_distance']//2, size = 1)[0]
+    

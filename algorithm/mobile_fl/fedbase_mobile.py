@@ -39,6 +39,10 @@ class BasicCloudServer(BasicServer):
         self.unused_clients_queue = []
         # print("Clients" , self.clients)
 
+        self.client_train_losses = []
+        self.client_valid_losses = []
+        self.client_train_metrics = []
+        self.client_valid_metrics = []
 
     
     def global_update_location(self):
@@ -78,10 +82,23 @@ class BasicCloudServer(BasicServer):
                 # print(False)
         # print("Number of filtered clients",filtered)
         self.clients = filtered_client_list
+
+        # print("Mean num clients: ", self.mean_num_clients)
+        # print("std num clients: ", self.std_num_clients)
+        # print("Number of clients from previous round" ,len(self.clients))
+
+        # print("unused client queue: ", [client.name for client in self.unused_clients_queue])
+        # print("Current clients: ", [client.name for client in self.clients])
+
         if len(self.clients) < self.mean_num_clients - self.std_num_clients:
             self.current_num_clients = np.random.randint(low = self.mean_num_clients - self.std_num_clients, high=self.mean_num_clients+self.std_num_clients + 1,
                                                         size=1)[0]
+
+            # print("Chosen number of clients for this round" ,self.current_num_clients)
+
             num_clients_to_readd = self.current_num_clients - len(self.clients)
+            # print("Num clients to readd", num_clients_to_readd)
+
             if num_clients_to_readd < len(self.unused_clients_queue):
                 clients_to_readd = random.sample(self.unused_clients_queue, k = num_clients_to_readd)
                 for client in clients_to_readd:
@@ -94,8 +111,6 @@ class BasicCloudServer(BasicServer):
                     client.location =np.random.randint( self.left_road_limit, self.right_road_limit, size =1)[0]
                     self.clients.append(client)
 
-    def get_current_num_clients(self):
-        self.current_num_clients = np.random.randint()
     
     def initialize_clients_location_velocity(self):
         new_client_list = []
@@ -133,13 +148,22 @@ class BasicCloudServer(BasicServer):
         self.initialize_clients_location_velocity()
 
 
-    def sample_new_clients(self, num_new_clients):
-        # for i in range(num_new_clients):
-        #     initial_location = self.
-        pass
+    def unpack(self, packages_received_from_clients):
+        """
+        Unpack the information from the received packages. Return models and losses as default.
+        :param
+            packages_received_from_clients:
+        :return:
+            models: a list of the locally improved model
+            losses: a list of the losses of the global model on each training dataset
+        """
+        models = [cp["model"] for cp in packages_received_from_clients]
+        train_losses = [cp["train_loss"] for cp in packages_received_from_clients]
+        valid_losses = [cp["valid_loss"] for cp in packages_received_from_clients]
+        train_acc = [cp["train_acc"] for cp in packages_received_from_clients]
+        valid_acc = [cp["valid_acc"] for cp in packages_received_from_clients]
 
-    def sample(self):
-        pass        
+        return models, (train_losses, valid_losses, train_acc, valid_acc)
 
 
 class BasicEdgeServer(BasicServer):
@@ -150,7 +174,25 @@ class BasicEdgeServer(BasicServer):
         self.option = option
         self.total_datavol = 0
         # self.list_clients = []
-    
+
+    def unpack(self, packages_received_from_clients):
+        """
+        Unpack the information from the received packages. Return models and losses as default.
+        :param
+            packages_received_from_clients:
+        :return:
+            models: a list of the locally improved model
+            losses: a list of the losses of the global model on each training dataset
+        """
+        models = [cp["model"] for cp in packages_received_from_clients]
+        train_losses = [cp["train_loss"] for cp in packages_received_from_clients]
+        valid_losses = [cp["valid_loss"] for cp in packages_received_from_clients]
+        train_acc = [cp["train_acc"] for cp in packages_received_from_clients]
+        valid_acc = [cp["valid_acc"] for cp in packages_received_from_clients]
+
+        return models, (train_losses, valid_losses, train_acc, valid_acc)
+
+
 
     # def update_list_clients(self,clients):
     #     self.list_clients = clients
@@ -174,5 +216,136 @@ class BasicMobileClient(BasicClient):
 
     def get_location(self):
         return self.location
-    
+
+    def train(self, model):
+        """
+        Standard local training procedure. Train the transmitted model with local training dataset.
+        :param
+            model: the global model
+        :return
+        """
+        model.train()
+        data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
+        optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr = self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+        for iter in range(self.epochs):
+            for batch_id, batch_data in enumerate(data_loader):
+                model.zero_grad()
+                loss = self.calculator.get_loss(model, batch_data)
+                loss.backward()
+                optimizer.step()
+        return
+
+    def test(self, model, dataflag='valid'):
+        """
+        Evaluate the model with local data (e.g. training data or validating data).
+        :param
+            model:
+            dataflag: choose the dataset to be evaluated on
+        :return:
+            eval_metric: task specified evaluation metric
+            loss: task specified loss
+        """
+        dataset = self.train_data if dataflag=='train' else self.valid_data
+        model.eval()
+        loss = 0
+        eval_metric = 0
+        data_loader = self.calculator.get_data_loader(dataset, batch_size=64)
+        for batch_id, batch_data in enumerate(data_loader):
+
+            bmean_eval_metric, bmean_loss = self.calculator.test(model, batch_data)
+            loss += bmean_loss * len(batch_data[1])
+            eval_metric += bmean_eval_metric * len(batch_data[1])
+        eval_metric =1.0 * eval_metric / len(dataset)
+        loss = 1.0 * loss / len(dataset)
+        return eval_metric, loss
+
+    def unpack(self, received_pkg):
+        """
+        Unpack the package received from the server
+        :param
+            received_pkg: a dict contains the global model as default
+        :return:
+            the unpacked information that can be rewritten
+        """
+        # unpack the received package
+        return received_pkg['model']
+
+    def reply(self, svr_pkg):
+        """
+        Reply to server with the transmitted package.
+        The whole local procedure should be planned here.
+        The standard form consists of three procedure:
+        unpacking the server_package to obtain the global model,
+        training the global model, and finally packing the improved
+        model into client_package.
+        :param
+            svr_pkg: the package received from the server
+        :return:
+            client_pkg: the package to be send to the server
+        """
+        # print("In reply function of client")
+        model = self.unpack(svr_pkg)
+        # print("CLient unpacked to package")
+        train_loss = self.train_loss(model)
+        valid_loss = self.valid_loss(model)
+        train_acc = self.train_metrics(model)
+        valid_acc = self.valid_metrics(model)
+
+        # print("Client evaluated the train losss")
+        self.train(model)
+        # print("Client trained the model")
+        eval_dict = {'train_loss': train_loss, 
+                      'valid_loss': valid_loss,
+                      'train_acc':train_acc,
+                      'valid_acc': valid_acc}
+        cpkg = self.pack(model, eval_dict)
+        # print("Client packed and finished")
+        return cpkg
+
+    def pack(self, model,eval_dict ):
+        """
+        Packing the package to be send to the server. The operations of compression
+        of encryption of the package should be done here.
+        :param
+            model: the locally trained model
+            loss: the loss of the global model on the local training dataset
+        :return
+            package: a dict that contains the necessary information for the server
+        """
+        pkg = {'model': model} | eval_dict
+        return pkg
+
+
+    def train_loss(self, model):
+        """
+        Get the task specified loss of the model on local training data
+        :param model:
+        :return:
+        """
+        return self.test(model,'train')[1]
+
+    def train_metrics(self, model):
+        """
+        Get the task specified metrics of the model on local training data
+        :param model:
+        :return:
+        """
+        return self.test(model,'train')[0]
+
+    def valid_loss(self, model):
+        """
+        Get the task specified loss of the model on local validating data
+        :param model:
+        :return:
+        """
+        return self.test(model)[1]
+
+    def valid_metrics(self, model):
+        """
+        Get the task specified loss of the model on local validating data
+        :param model:
+        :return:
+        """
+        return self.test(model)[0]
+
 

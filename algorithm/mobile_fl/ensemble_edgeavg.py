@@ -15,7 +15,7 @@ from main_mobile import logger
 import os
 from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
-from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
+from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data, SoftTargetDistillLoss
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,clients,test_data = None):
@@ -66,8 +66,8 @@ class CloudServer(BasicCloudServer):
         self.assign_client_to_server()
         # print("Done assigning client to sercer")
 
-        self.selected_clients = self.sample()
-        print("Selected clients", len(self.selected_clients))
+        self.selected_clients = self.clients
+        # print("Selected clients", [client.name for client in self.selected_clients])
 
         # first, aggregate the edges with their clientss
         # for client in self.selected_clients:
@@ -78,12 +78,22 @@ class CloudServer(BasicCloudServer):
         all_client_valid_metrics = []
 
         for edge in self.edges:
+            edge.previous_model = copy.deepcopy(edge.model)
+            # print(f"Edge: {edge.name} - clients {self.client_edge_mapping[edge.name]}" )
+            clients_chosen_in_edge =     list(np.random.choice(self.client_edge_mapping[edge.name],
+                                                               int(len(self.client_edge_mapping[edge.name]) * self.option['proportion']), replace=False))
+
+            # print(f"Edge: {edge.name} - clients {clients_chosen_in_edge}" )
+
+
             aggregated_clients = []
             for client in self.selected_clients:
-                if client.name in self.client_edge_mapping[edge.name]:
+                if client.name in clients_chosen_in_edge:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
+                # print(aggregated_clients)
                 # print(edge.communicate(aggregated_clients))
+                global_model  =copy.deepcopy(self.model)
                 aggregated_clients_models , (agg_clients_train_losses, 
                                              agg_clients_valid_losses, 
                                              agg_clients_train_accs, 
@@ -122,10 +132,12 @@ class CloudServer(BasicCloudServer):
 
             for edge in self.edges:
                 edge.model = copy.deepcopy(self.model)
+                edge.previous_model = copy.deepcopy(self.model)
 
         edges_models_list = []
         for edge in self.edges:
                 edges_models_list.append(copy.deepcopy(edge.model))
+     
         
 
 
@@ -355,6 +367,7 @@ class EdgeServer(BasicEdgeServer):
     def __init__(self, option,model,cover_area, name = '', clients = [], test_data=None):
         super(EdgeServer, self).__init__(option,model,cover_area, name , clients , test_data)
         self.clients = []
+        self.previous_model = None
 
     def update_client_list(self,clients):
         self.clients = clients
@@ -428,7 +441,8 @@ class EdgeServer(BasicEdgeServer):
             a dict that only contains the global model as default.
         """
         return {
-            "model" : copy.deepcopy(self.model),
+            "edge_model" : copy.deepcopy(self.model),
+            "previous_model" : copy.deepcopy(self.previous_model),
         }
 
     def unpack_svr(self, received_pkg):
@@ -473,13 +487,77 @@ class MobileClient(BasicMobileClient):
     def __init__(self, option, location = 0,  velocity = 0, name='', train_data=None, valid_data=None):
         super(MobileClient, self).__init__(option, location, velocity,  name, train_data, valid_data)
         # self.velocity = velocity
-        self.option = option 
         self.associated_server = None
-    
+        self.mu = option['mu']
+        self.T  = option['distill_temperature']
+        self.model = None
+
+        self.distill_loss = SoftTargetDistillLoss(self.T)
+        self.alpha = option['distill_alpha']
+        self.option = option
+
+
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
 
-    def update_location(self):
-        # self.location += self.velocity
-        self.location  = np.random.randint(low=-self.option['road_distance']//2, high = self.option['road_distance']//2, size = 1)[0]
+    def unpack(self, received_pkg):
+        """
+        Unpack the package received from the server
+        :param
+            received_pkg: a dict contains the global model as default
+        :return:
+            the unpacked information that can be rewritten
+        """
+        # unpack the received package
+        return received_pkg['edge_model'], received_pkg['previous_model']
+
+    def reply(self, svr_pkg):
+        """
+        Reply to server with the transmitted package.
+        The whole local procedure should be planned here.
+        The standard form consists of three procedure:
+        unpacking the server_package to obtain the global model,
+        training the global model, and finally packing the improved
+        model into client_package.
+        :param
+            svr_pkg: the package received from the server
+        :return:
+            client_pkg: the package to be send to the server
+        """
+        # print("In reply function of client")
+        edge_model, previous_model = self.unpack(svr_pkg)
+        # print("CLient unpacked to package")
+        train_loss = self.train_loss(edge_model)
+        valid_loss = self.valid_loss(edge_model)
+        train_acc = self.train_metrics(edge_model)
+        valid_acc = self.valid_metrics(edge_model)
+
+        # print("Client evaluated the train losss")
+        edge_model = self.train(edge_model,previous_model)
+        # print("Client trained the model")
+        eval_dict = {'train_loss': train_loss, 
+                      'valid_loss': valid_loss,
+                      'train_acc':train_acc,
+                      'valid_acc': valid_acc}
+        cpkg = self.pack(edge_model, eval_dict)
+        # print("Client packed and finished")
+        return cpkg
+
+    def train(self, edge_model, previous_model):
+        # global parameters
+        # teacher_model = copy.deepcopy(global_model)
+        # if teacher_model != None:
+        #     teacher_model.freeze_grad()
+        model = fmodule._model_average([copy.deepcopy(previous_model), copy.deepcopy(edge_model)],
+                                        p = [self.option['global_ensemble_weights'], 1- self.option['global_ensemble_weights']])
+        model.train()
+        data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
+        optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr = self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+        for iter in range(self.epochs):
+            for batch_id, batch_data in enumerate(data_loader):
+                model.zero_grad()
+                loss = self.calculator.get_loss(model, batch_data)
+                loss.backward()
+                optimizer.step()
+        return model

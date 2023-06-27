@@ -23,9 +23,11 @@ def read_option():
     # methods of server side for sampling and aggregating
     parser.add_argument('--sample', help='methods for sampling clients', type=str, choices=sample_list, default='uniform')
     parser.add_argument('--aggregate', help='methods for aggregating models', type=str, choices=agg_list, default='uniform')
-    parser.add_argument('--learning_rate_decay', help='learning rate decay for the training process;', type=float, default=0.5)
+    parser.add_argument('--learning_rate_decay', help='learning rate decay for the training process;', type=float, default=0.99)
     parser.add_argument('--weight_decay', help='weight decay for the training process', type=float, default=0)
-    parser.add_argument('--lr_scheduler', help='type of the global learning rate scheduler', type=int, default=-1)
+    parser.add_argument('--lr_scheduler', help='type of the global learning rate scheduler', type=int, default=0)
+    parser.add_argument('--lr_scheduler_step', help='learning rate step for decaying during the training process;', type=int, default=100)
+
     # hyper-parameters of training in server side
     parser.add_argument('--num_rounds', help='number of communication rounds', type=int, default=20)
     parser.add_argument('--proportion', help='proportion of clients sampled per round', type=float, default=0.2)
@@ -37,7 +39,7 @@ def read_option():
     parser.add_argument('--momentum', help='momentum of local update', type=float, default=0)
 
     # machine environment settings
-    parser.add_argument('--seed', help='seed for random initialization;', type=int, default=0)
+    parser.add_argument('--seed', help='seed for random initialization;', type=int, default=42)
     parser.add_argument('--eval_interval', help='evaluate every __ rounds;', type=int, default=1)
     parser.add_argument('--num_threads', help='the number of threads;', type=int, default=1)
     parser.add_argument('--num_threads_per_gpu', help="the number of threads per gpu in the clients computing session;", type=int, default=1)
@@ -60,7 +62,7 @@ def read_option():
     parser.add_argument('--alpha', help='proportion of clients keeping original direction in FedFV/alpha in fedFA', type=float, default='0.0')
     parser.add_argument('--beta', help='beta in FedFA',type=float, default='1.0')
     parser.add_argument('--gamma', help='gamma in FedFA', type=float, default='0')
-    parser.add_argument('--mu', help='mu in fedprox', type=float, default='0.1')
+    parser.add_argument('--mu', help='mu in fedprox', type=float, default='0.2')
     
     # server gpu
     parser.add_argument('--server_gpu_id', help='server process on this gpu', type=int, default=0)
@@ -85,6 +87,14 @@ def read_option():
 
     parser.add_argument('--non_iid_classes', help='IID or not', type=int, default=0)
 
+    parser.add_argument('--record_client_metrics', help='Record clients metrics during training or not', type=int, default=1)
+
+
+    parser.add_argument('--distill_temperature', help='Temperature used for distillation loss', type=float, default=5)
+    parser.add_argument('--distill_alpha', help='Temperature used for distillation loss', type=float, default=0.1)
+
+
+    parser.add_argument('--global_ensemble_weights', help='Ensemble weights of the global model', type=float, default=0.1)
 
     try: option = vars(parser.parse_args())
     except IOError as msg: parser.error(str(msg))
@@ -110,6 +120,7 @@ def initialize(option):
     utils.fmodule.TaskCalculator.setOP(getattr(importlib.import_module('torch.optim'), option['optimizer']))
     utils.fmodule.Model = getattr(importlib.import_module(bmk_model_path), 'Model')
     task_reader = getattr(importlib.import_module(bmk_core_path), 'TaskReader')(taskpath=os.path.join('fedtask', option['task']))
+    print(task_reader)
     train_datas, valid_datas, test_data, client_names = task_reader.read_data()
     num_clients = len(client_names)
     print("done")

@@ -1,4 +1,4 @@
-/__pycache__/
+__pycache__/
 */__pycache__/
 /algorithm/fedrl_utils/ddpg_agent/__pycache__/
 /algorithm/fedrl_utils/buffers
@@ -11,4 +11,15 @@
 /utils/figures/
 *.txt
 test*
-/results
+results/
+results_distill/
+results_experiments/
+results_mobile/
+*.csv
+*.pt
+algorithm/distill_fl/kip/dataset/cifar-10-batches-py/
+*.gz
+# /results_distill
+# /results_distill
+# *.csv
+# /results_experiments/

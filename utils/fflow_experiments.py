@@ -22,7 +22,7 @@ def read_option():
 
     # methods of server side for sampling and aggregating
     parser.add_argument('--sample', help='methods for sampling clients', type=str, choices=sample_list, default='uniform')
-    parser.add_argument('--aggregate', help='methods for aggregating models', type=str, choices=agg_list, default='none')
+    parser.add_argument('--aggregate', help='methods for aggregating models', type=str, choices=agg_list, default=None)
     parser.add_argument('--learning_rate_decay', help='learning rate decay for the training process;', type=float, default=0.998)
     parser.add_argument('--weight_decay', help='weight decay for the training process', type=float, default=0)
     parser.add_argument('--lr_scheduler', help='type of the global learning rate scheduler', type=int, default=-1)
@@ -67,12 +67,11 @@ def read_option():
     
 
     # args for moving fed
-    parser.add_argument('--mean_num_vehicle_clients', help='Mean number of vehicle clients on the road', type=int, default=100)
-    parser.add_argument('--std_num_vehicle_clients', help='Standard deviation number of vehicle clients on the road', type=int, default=5)
-    parser.add_argument('--mean_velocity', help='Mean velocity of vehicle clients on the road (km/round)', type=int, default=40)
-    parser.add_argument('--std_velocity', help='Standard deviation of velocity of vehicle clients on the road', type=int, default=20)
-    parser.add_argument('--num_edges', help='Number of edge servers on the road', type=int, default=10)
-    parser.add_argument('--road_length', help='The length of the road',type=int, default=1000)
+    parser.add_argument('--k_clients', help='Number of intial clients', type=int, default=20)
+    parser.add_argument('--num_clients_add', help='Number of clients to add per t round', type=int, default=3)
+    parser.add_argument('--num_clients_delete', help='Number of clients to delete per t round', type=int, default=3)
+    parser.add_argument('--rounds_per_add', help='Every round add a number of clients', type=int, default=20)
+    parser.add_argument('--rounds_per_delete', help='Every round add a number of clients', type=int, default=50)
 
     try: option = vars(parser.parse_args())
     except IOError as msg: parser.error(str(msg))
@@ -109,7 +108,7 @@ def initialize(option):
     print('init clients...', end='')
     client_path = '%s.%s' % ('algorithm', option['algorithm'])
     Client=getattr(importlib.import_module(client_path), 'Client')
-    clients = [Client(option, name = client_names[cid], train_data = train_datas[cid], valid_data = valid_datas[cid]) for cid in range(num_clients)]
+    clients = [Client(option, name = client_names[cid], train_data = train_datas[cid], valid_data = valid_datas[cid], test_data = test_data) for cid in range(num_clients)]
     print('done')
 
     # init server

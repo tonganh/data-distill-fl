@@ -23,6 +23,11 @@ class CloudServer(BasicCloudServer):
         self.initialize()
 
 
+
+    def update_current_round_to_client(self,current_round):
+        for client in self.clients:
+            client.current_round = current_round
+
     def run(self):
         """
         Start the federated learning symtem where the global model is trained iteratively.
@@ -65,9 +70,14 @@ class CloudServer(BasicCloudServer):
         # print("Done updating client_list")
         self.assign_client_to_server()
         # print("Done assigning client to sercer")
-
-        self.selected_clients = self.sample()
-        print("Selected clients", len(self.selected_clients))
+        updated_clients = []
+        for client in self.clients:
+            client.weight_decay_scheduler(t, self.option['edge_update_frequency'])
+            updated_clients.append(client)
+        self.clients = updated_clients
+        # self.selected_clients = self.sample()
+        self.selected_clients = self.clients
+        # print("Selected clients", [client.name for client in self.selected_clients])
 
         # first, aggregate the edges with their clientss
         # for client in self.selected_clients:
@@ -78,11 +88,20 @@ class CloudServer(BasicCloudServer):
         all_client_valid_metrics = []
 
         for edge in self.edges:
+
+            # print(f"Edge: {edge.name} - clients {self.client_edge_mapping[edge.name]}" )
+            clients_chosen_in_edge =     list(np.random.choice(self.client_edge_mapping[edge.name],
+                                                               int(len(self.client_edge_mapping[edge.name]) * self.option['proportion']), replace=False))
+
+            # print(f"Edge: {edge.name} - clients {clients_chosen_in_edge}" )
+
+
             aggregated_clients = []
             for client in self.selected_clients:
-                if client.name in self.client_edge_mapping[edge.name]:
+                if client.name in clients_chosen_in_edge:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
+                # print(aggregated_clients)
                 # print(edge.communicate(aggregated_clients))
                 aggregated_clients_models , (agg_clients_train_losses, 
                                              agg_clients_valid_losses, 
@@ -126,7 +145,7 @@ class CloudServer(BasicCloudServer):
         edges_models_list = []
         for edge in self.edges:
                 edges_models_list.append(copy.deepcopy(edge.model))
-        
+     
 
 
 
@@ -188,36 +207,42 @@ class CloudServer(BasicCloudServer):
             "model" : copy.deepcopy(self.model),
         }
 
-    def sample(self):
-        """Sample the clients.
-        :param
-            replacement: sample with replacement or not
-        :return
-            a list of the ids of the selected clients
-        """
-        # print("Sampling selected clients")
-        all_clients = [cid for cid in range(self.num_clients)]
-        # print("Done all clients")
-        selected_clients = []
-        # collect all the active clients at this round and wait for at least one client is active and
-        active_clients = []
-        active_clients = self.clients
-        # while(len(active_clients)<1):
-        #     active_clients = [cid for cid in range(self.num_clients) if self.clients[cid].is_active()]
-        # print("DOne collect all the active clients")
-        # sample clients
-        if self.sample_option == 'active':
-            # select all the active clients without sampling
-            selected_clients = active_clients
-        if self.sample_option == 'uniform':
-            # original sample proposed by fedavg
-            selected_clients = list(np.random.choice(active_clients, self.clients_per_round, replace=False))
-        elif self.sample_option =='md':
-            # the default setting that is introduced by FedProx
-            selected_clients = list(np.random.choice(all_clients, self.clients_per_round, replace=True, p=[nk / self.data_vol for nk in self.client_vols]))
-        # drop the selected but inactive clients
-        selected_clients = list(set(active_clients).intersection(selected_clients))
-        return selected_clients
+    # def sample(self):
+    #     """Sample the clients.
+    #     :param
+    #         replacement: sample with replacement or not
+    #     :return
+    #         a list of the ids of the selected clients
+    #     """
+    #     # print("Sampling selected clients")
+    #     all_clients = [cid for cid in range(self.num_clients)]
+
+    #     # print("Done all clients")
+    #     selected_clients = []
+    #     # collect all the active clients at this round and wait for at least one client is active and
+    #     active_clients = []
+    #     active_clients = self.clients
+    #     self.clients_per_round =  max(int(self.num_clients * self.option['proportion']), 1)
+
+    #     # while(len(active_clients)<1):
+    #     #     active_clients = [cid for cid in range(self.num_clients) if self.clients[cid].is_active()]
+    #     # print("DOne collect all the active clients")
+    #     # sample clients
+    #     if self.sample_option == 'active':
+    #         # select all the active clients without sampling
+    #         selected_clients = active_clients
+    #     if self.sample_option == 'uniform':
+    #         # original sample proposed by fedavg
+    #         # print(self.clients_per_round)
+    #         # print(len(self.clients))
+    #         selected_clients = list(np.random.choice(active_clients,self.clients_per_round, replace=False))
+
+    #     elif self.sample_option =='md':
+    #         # the default setting that is introduced by FedProx
+    #         selected_clients = list(np.random.choice(all_clients, self.clients_per_round, replace=True, p=[nk / self.data_vol for nk in self.client_vols]))
+    #     # drop the selected but inactive clients
+    #     selected_clients = list(set(active_clients).intersection(selected_clients))
+    #     return selected_clients
 
 
 
@@ -473,13 +498,21 @@ class MobileClient(BasicMobileClient):
     def __init__(self, option, location = 0,  velocity = 0, name='', train_data=None, valid_data=None):
         super(MobileClient, self).__init__(option, location, velocity,  name, train_data, valid_data)
         # self.velocity = velocity
-        self.option = option 
         self.associated_server = None
-    
+        self.current_round = 0
+
+
+    def weight_decay_scheduler(self, current_round, frequency):
+        """
+        Control the step size (i.e. learning rate) of local training
+        :param
+            current_round: the current communication round
+        """
+        """eta_{round+1} = DecayRate * eta_{round}"""
+        self.weight_decay =  self.option['weight_decay'] * 2.5 * (current_round % frequency)
+        print(self.weight_decay)
+
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
-
-    def update_location(self):
-        # self.location += self.velocity
-        self.location  = np.random.randint(low=-self.option['road_distance']//2, high = self.option['road_distance']//2, size = 1)[0]
+    

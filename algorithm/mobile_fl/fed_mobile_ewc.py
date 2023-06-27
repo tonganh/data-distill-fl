@@ -15,7 +15,10 @@ from main_mobile import logger
 import os
 from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
-from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
+from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data, EWC, variable
+from torch import autograd
+from torch.autograd import Variable
+import utils
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,clients,test_data = None):
@@ -72,39 +75,18 @@ class CloudServer(BasicCloudServer):
         # first, aggregate the edges with their clientss
         # for client in self.selected_clients:
         #     client.print_client_info()
-        all_client_train_losses = []
-        all_client_valid_losses = []
-        all_client_train_metrics = []
-        all_client_valid_metrics = []
-
         for edge in self.edges:
             aggregated_clients = []
             for client in self.selected_clients:
                 if client.name in self.client_edge_mapping[edge.name]:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
-                # print(edge.communicate(aggregated_clients))
-                aggregated_clients_models , (agg_clients_train_losses, 
-                                             agg_clients_valid_losses, 
-                                             agg_clients_train_accs, 
-                                             agg_clients_valid_accs)= edge.communicate(aggregated_clients)
-                
+                aggregated_clients_models , _= edge.communicate(aggregated_clients)
                 edge_total_datavol = sum([client.datavol for client in aggregated_clients])
                 edge.total_datavol = edge_total_datavol
                 aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
                 # print(len(aggregation_weights), len(aggregated_clients_models))
                 edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
-
-                all_client_train_losses.extend(agg_clients_train_losses)
-                all_client_valid_losses.extend(agg_clients_valid_losses)
-                all_client_train_metrics.extend(agg_clients_train_accs)
-                all_client_valid_metrics.extend(agg_clients_valid_accs)
-        
-        self.client_train_losses.append(sum(all_client_train_losses) / len(all_client_train_losses))
-        self.client_valid_losses.append(sum(all_client_valid_losses) / len(all_client_valid_losses))
-        self.client_train_metrics.append(sum(all_client_train_metrics) / len(all_client_train_metrics))
-        self.client_valid_metrics.append(sum(all_client_valid_metrics) / len(all_client_valid_metrics))
-
             # else:
             #     print('No aggregated clients')
         # models, train_losses = self.communicate(self.edges)
@@ -473,13 +455,112 @@ class MobileClient(BasicMobileClient):
     def __init__(self, option, location = 0,  velocity = 0, name='', train_data=None, valid_data=None):
         super(MobileClient, self).__init__(option, location, velocity,  name, train_data, valid_data)
         # self.velocity = velocity
-        self.option = option 
         self.associated_server = None
-    
+        self.mu = option['mu']
+
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
 
-    def update_location(self):
-        # self.location += self.velocity
-        self.location  = np.random.randint(low=-self.option['road_distance']//2, high = self.option['road_distance']//2, size = 1)[0]
+    def train(self, server_model):
+        # global parameters
+        server_src_model = copy.deepcopy(server_model)
+        server_src_model.freeze_grad()
+        server_model.train()
+        data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
+        optimizer = self.calculator.get_optimizer(self.optimizer_name, server_model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+        for iter in range(self.epochs):
+            for batch_idx, batch_data in enumerate(data_loader):
+                server_model.zero_grad()
+                original_loss = self.calculator.get_loss(server_model, batch_data)
+                # proximal term
+                loss_proximal = 0
+                for pm, ps in zip(server_model.parameters(), server_src_model.parameters()):
+                    loss_proximal += torch.sum(torch.pow(pm-ps,2))
+                loss = original_loss + 0.5 * self.mu * loss_proximal                #
+                loss.backward()
+                optimizer.step()
+        return
+    
+    def estimate_fisher(self, dataset, sample_size, batch_size=32):
+        # sample loglikelihoods from the dataset.
+        data_loader = utils.get_data_loader(dataset, batch_size)
+        loglikelihoods = []
+        for x, y in data_loader:
+            x = x.view(batch_size, -1)
+            x = Variable(x).cuda() if self._is_on_cuda() else Variable(x)
+            y = Variable(y).cuda() if self._is_on_cuda() else Variable(y)
+            loglikelihoods.append(
+                F.log_softmax(self(x), dim=1)[range(batch_size), y.data]
+            )
+            if len(loglikelihoods) >= sample_size // batch_size:
+                break
+        # estimate the fisher information of the parameters.
+        loglikelihoods = torch.cat(loglikelihoods).unbind()
+        loglikelihood_grads = zip(*[autograd.grad(
+            l, self.parameters(),
+            retain_graph=(i < len(loglikelihoods))
+        ) for i, l in enumerate(loglikelihoods, 1)])
+        loglikelihood_grads = [torch.stack(gs) for gs in loglikelihood_grads]
+        fisher_diagonals = [(g ** 2).mean(0) for g in loglikelihood_grads]
+        param_names = [
+            n.replace('.', '__') for n, p in self.named_parameters()
+        ]
+        return {n: f.detach() for n, f in zip(param_names, fisher_diagonals)} 
+
+
+    def consolidate(self,model, fisher):
+        for n, p in model.named_parameters():
+            n = n.replace('.', '__')
+            self.register_buffer('{}_mean'.format(n), p.data.clone())
+            self.register_buffer('{}_fisher'
+                                 .format(n), fisher[n].data.clone())     
+
+    def ewc_loss(self,model, cuda=False):
+        model.train()
+        try:
+            losses = []
+            for n, p in model.named_parameters():
+                # retrieve the consolidated mean and fisher information.
+                n = n.replace('.', '__')
+                mean = getattr(self, '{}_mean'.format(n))
+                fisher = getattr(self, '{}_fisher'.format(n))
+                # wrap mean and fisher in variables.
+                mean = Variable(mean)
+                fisher = Variable(fisher)
+                # calculate a ewc loss. (assumes the parameter's prior as
+                # gaussian distribution with the estimated mean and the
+                # estimated cramer-rao lower bound variance, which is
+                # equivalent to the inverse of fisher information)
+                losses.append((fisher * (p-mean)**2).sum())
+            return (self.lamda/2)*sum(losses)
+        except AttributeError:
+            # ewc loss is 0 if there's no consolidated parameters.
+            return (
+                Variable(torch.zeros(1)).cuda() if cuda else
+                Variable(torch.zeros(1))
+            )
+
+    def train(self, model: torch.nn.Module,ewc: EWC, importance: float):
+
+        src_model = copy.deepcopy(model)
+        src_model.freeze_grad()
+
+        model.train()
+
+        data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
+        optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+
+        epoch_loss = 0
+        for iter in range(self.epochs):
+            for batch_idx, batch_data in enumerate(data_loader):
+                model.zero_grad()
+                input, target = batch_data
+                input, target = variable(input), variable(target)
+                optimizer.zero_grad()
+                output = model(input)
+                loss = torch.nn.functional.cross_entropy(output, target) + importance * ewc.penalty(model)
+                epoch_loss += loss.data[0]
+                loss.backward()
+                optimizer.step()
+        return 

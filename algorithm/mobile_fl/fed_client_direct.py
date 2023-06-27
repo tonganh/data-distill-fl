@@ -65,7 +65,14 @@ class CloudServer(BasicCloudServer):
         # print("Selected clients", self.selected_clients)
         # print("Done sampling")
         # training
-        models, train_losses = self.communicate(self.selected_clients)
+        models, (train_losses, valid_losses, train_accs, valid_accs) = self.communicate(self.selected_clients)
+        
+        self.client_train_losses.append(sum(train_losses) / len(train_losses))
+        self.client_valid_losses.append(sum(valid_losses) / len(valid_losses))
+        self.client_train_metrics.append(sum(train_accs) / len(train_accs))
+        self.client_valid_metrics.append(sum(valid_accs) / len(valid_accs))
+
+        # print(len(train_losses))
         # print("Done a training step")
         # check whether all the clients have dropped out, because the dropped clients will be deleted from self.selected_clients
         if not self.selected_clients: return
@@ -77,7 +84,7 @@ class CloudServer(BasicCloudServer):
 
 
 
-    def communicate(self, edges):
+    def communicate(self, clients):
         """
         The whole simulating communication procedure with the selected clients.
         This part supports for simulating the client dropping out.
@@ -89,14 +96,14 @@ class CloudServer(BasicCloudServer):
         packages_received_from_edges = []
         if self.num_threads <= 1:
             # computing iteratively
-            for edge in edges:
-                response_from_edge = self.communicate_with(edge)
+            for client in clients:
+                response_from_edge = self.communicate_with(client)
                 packages_received_from_edges.append(response_from_edge)
     
         else:
             # computing in parallel
-            pool = ThreadPool(min(self.num_threads, len(edges)))
-            packages_received_from_edges = pool.map(self.communicate_with, edges)
+            pool = ThreadPool(min(self.num_threads, len(clients)))
+            packages_received_from_edges = pool.map(self.communicate_with, client)
             pool.close()
             pool.join()
         # count the clients not dropping
@@ -104,7 +111,7 @@ class CloudServer(BasicCloudServer):
         # packages_received_from_edges = [pi for pi in packages_received_from_clients if pi]
         return self.unpack(packages_received_from_edges)
 
-    def communicate_with(self, edge):
+    def communicate_with(self, client):
         """
         Pack the information that is needed for client_id to improve the global model
         :param
@@ -117,7 +124,7 @@ class CloudServer(BasicCloudServer):
 
         # listen for the client's response and return None if the client drops out
         # if self.clients[client_id].is_drop(): return None
-        reply = edge.reply(svr_pkg)
+        reply = client.reply(svr_pkg)
         return reply
 
     def pack(self):
@@ -303,20 +310,7 @@ class EdgeServer(BasicEdgeServer):
 
     def update_client_list(self,clients):
         self.clients = clients
-    
-    def get_data(self):
-        all_edge_data = []
-        for client in self.clients:
-            # print(client.train_data.X.shape)
-            # return client.train_data.X
-            all_edge_data.append(client.train_data.X)
-        
-        edge_data = torch.cat(all_edge_data,0)
-        # print(edge_data.shape)
-        return edge_data
-    
-
-    # def get_client_distribution()
+        # def get_client_distribution()
 
     def print_edge_info(self):
         print('Edge {} - cover area: {}'.format(self.name,self.cover_area))
@@ -344,8 +338,6 @@ class EdgeServer(BasicEdgeServer):
             pool.close()
             pool.join()
         # count the clients not dropping
-        # self.selected_clients = [selected_clients[i] for i in range(len(selected_clients)) if packages_received_from_clients[i]]
-        # packages_received_from_edges = [pi for pi in packages_received_from_clients if pi]
         return self.unpack(packages_received_from_clients)
 
     def communicate_with(self, client):
@@ -386,32 +378,6 @@ class EdgeServer(BasicEdgeServer):
         """
         # unpack the received package
         return received_pkg['model']
-
-    # def reply(self, svr_pkg):
-    #     """
-    #     Reply to server with the transmitted package.
-    #     The whole local procedure should be planned here.
-    #     The standard form consists of three procedure:
-    #     unpacking the server_package to obtain the global model,
-    #     training the global model, and finally packing the improved
-    #     model into client_package.
-    #     :param
-    #         svr_pkg: the package received from the server
-    #     :return:
-    #         client_pkg: the package to be send to the server
-    #     """
-    #     # print("In reply function of client")
-    #     # print(svr_pkg)
-    #     model = self.unpack_svr(svr_pkg)
-    #     # print("CLient unpacked to package")
-    #     # loss = self.train_loss(model)
-    #     loss = 0
-    #     print("Client evaluated the train losss")
-    #     self.train(model)
-    #     print("Client trained the model")
-    #     cpkg = self.pack(model, loss)
-    #     # print("Client packed and finished")
-    #     return cpkg
 
 
 class MobileClient(BasicMobileClient):

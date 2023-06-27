@@ -8,9 +8,9 @@ class Server(MPBasicServer):
         super(Server, self).__init__(option, model, clients, test_data)
         
     def finish(self, model_path):
-        if not Path(model_path).exists():
+        if not Path().exists():
             os.system(f"mkdir -p {model_path}")
-        task = self.option['task']
+        task = self.optimodel_pathon['task']
         torch.save(self.model.state_dict(), f"{model_path}/{self.name}_{self.num_rounds}_{task}.pth")
         pass
     
