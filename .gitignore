@@ -5,7 +5,7 @@ __pycache__/
 /algorithm/fedrl_utils/models
 /algorithm/fedrl_utils/baseline
 /algorithm/kd_utils/
-/benchmark/
+/benchmark/*/data
 /fedtask/
 .vscode*
 /utils/figures/
