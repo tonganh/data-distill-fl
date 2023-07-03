@@ -23,9 +23,14 @@ from sklearn.metrics import classification_report
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import csv
-
+import datetime
 import logging
 
+now = datetime.datetime.now()
+formatted_date_time = now.strftime("%Y-%m-%d_%H-%M-%S")
+
+directory_path = "log"  # specify the directory where log files will be saved
+log_file_name = f'{directory_path}/log_kip_{formatted_date_time}.log'
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -33,7 +38,7 @@ logging.basicConfig(
 )
 
 # Create a file handler
-file_handler = logging.FileHandler('log_kip.log')
+file_handler = logging.FileHandler(log_file_name)
 file_handler.setLevel(logging.DEBUG)
 
 # Create a stream handler (for console output)
@@ -591,8 +596,14 @@ class Distiller():
                     # x_tensor = torch.tensor(params['x'])
                     best_data_synthetic = params
                     x_np = np.array(params['x'])
-                    y_np = np.array(params['y'])
+                    y_prob = np.array(params['y'])
+                    y_np = np.argmax(y_prob, axis=1)
+                    # convert ra 1 label cụ thể
+                    logger.info(f'x_np {x_np}')
+                    logger.info(f'y_prob {y_prob}')
+                    logger.info(f'y_np {y_np}')
                     torch.save(x_np, f'{self.save_path}/x_distill.pt')
+                    torch.save(y_prob, f'{self.save_path}/y_prob_distill.pt')
                     torch.save(y_np, f'{self.save_path}/y_distill.pt')
 
                 self.display_classification_report(y_pred, y_target)

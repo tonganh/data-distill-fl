@@ -104,9 +104,9 @@ def main_distill():
     flw.setup_seed(option['seed'])
     # initialize server
     server = flw.initialize(option)
-    if server.option['distill_before_train']:
-        #start distillation
-        server.distill()
+    # if server.option['distill_before_train']:
+    #     #start distillation
+    #     server.distill()
     # start federated optimization
     server.run()
 

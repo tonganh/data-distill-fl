@@ -49,6 +49,9 @@ def extract_from_zip(src_path, target_path):
     f.close()
     return [os.path.join(target_path, tar) for tar in targets]
 
+
+
+
 class BasicTaskGen:
     _TYPE_DIST = {
         0: 'iid',
@@ -121,6 +124,7 @@ class BasicTaskGen:
     def _check_task_exist(self):
         """Check whether the task already exists."""
         taskname = self.get_taskname()
+        print(taskname)
         return os.path.exists(os.path.join(self.rootpath, taskname))
 
 class DefaultTaskGen(BasicTaskGen):
@@ -135,6 +139,7 @@ class DefaultTaskGen(BasicTaskGen):
         self.taskname = self.get_taskname()
         self.taskpath = os.path.join(self.rootpath, self.taskname)
         self.save_data = self.XYData_to_json
+        self.label_after_sort_case3 = None
         self.datasrc = {
             'lib': None,
             'class_name': None,
@@ -157,7 +162,10 @@ class DefaultTaskGen(BasicTaskGen):
         # partition data and hold-out for each local dataset
         print('-----------------------------------------------------')
         print('Partitioning data...')
+        labels=[]
         local_datas = self.partition()
+        # print("Local data", local_datas)
+        # ? Đoạn này chỉ đơn thuần là split data, không ảnh hưởng
         train_cidxs, valid_cidxs = self.local_holdout(local_datas, rate=0.8, shuffle=True)
         print('Done.')
         # save task infomation as .json file and the federated dataset
@@ -243,6 +251,7 @@ class DefaultTaskGen(BasicTaskGen):
 
         elif self.dist_id == 3:
             """label_skew_shard"""
+            # Get index and label in train data
             dpairs = [[did, self.train_data[did][-1]] for did in range(len(self.train_data))]
             self.skewness = min(max(0, self.skewness), 1.0)
             num_shards = max(int((1 - self.skewness) * self.num_classes * 2), 1)
@@ -251,14 +260,33 @@ class DefaultTaskGen(BasicTaskGen):
             z = zip([p[1] for p in dpairs], all_idxs)
             z = sorted(z)
             labels, all_idxs = zip(*z)
+            self.label_after_sort_case3 = labels
             shardsize = int(client_datasize / num_shards)
             idxs_shard = range(int(self.num_clients * num_shards))
             local_datas = [[] for i in range(self.num_clients)]
             for i in range(self.num_clients):
+                # if i ==22:
+                #     import pdb; pdb.set_trace()
                 rand_set = set(np.random.choice(idxs_shard, num_shards, replace=False))
                 idxs_shard = list(set(idxs_shard) - rand_set)
+                # for rand in rand_set:
+                #     local_datas[i].extend(all_idxs[rand * shardsize:(rand + 1) * shardsize])
                 for rand in rand_set:
-                    local_datas[i].extend(all_idxs[rand * shardsize:(rand + 1) * shardsize])
+                    sorted_indices = all_idxs[rand * shardsize:(rand + 1) * shardsize]
+                    original_indices = [all_idxs[idx] for idx in sorted_indices]
+                    local_datas[i].extend(original_indices)
+
+            for i in range(self.num_clients):
+                # ... Rest of the code in the loop ...
+
+                # Calculating distinct labels for client i
+                client_data_indices = local_datas[i]
+                client_labels = [self.train_data[did][-1] for did in client_data_indices]
+                distinct_labels = set(client_labels)
+
+                # Log the distinct labels for the client
+                print(f'After running client {i}, distinct labels: {distinct_labels}')
+                    
 
         elif self.dist_id == 4:
             pass
@@ -282,12 +310,15 @@ class DefaultTaskGen(BasicTaskGen):
                 minv = np.min(proportions * len(self.train_data))
             proportions = (np.cumsum(proportions) * len(d_idxs)).astype(int)[:-1]
             local_datas  = np.split(d_idxs, proportions)
+        
+        
         return local_datas
 
     def local_holdout(self, local_datas, rate=0.8, shuffle=False):
         """split each local dataset into train data and valid data according the rate."""
         train_cidxs = []
         valid_cidxs = []
+        # Bản chất là từng client
         for local_data in local_datas:
             if shuffle:
                 np.random.shuffle(local_data)
@@ -329,6 +360,7 @@ class DefaultTaskGen(BasicTaskGen):
                     'x':[self.train_data['x'][did] for did in valid_cidxs[cid]], 'y':[self.train_data['y'][did] for did in valid_cidxs[cid]]
                 }
             }
+
         with open(os.path.join(self.taskpath, 'data.json'), 'w') as outf:
             ujson.dump(feddata, outf)
         return
@@ -466,7 +498,6 @@ class XYTaskReader(BasicTaskReader):
             feddata = ujson.load(inf)
         # print(feddata.keys())
         # print(feddata['store'])
-    
         test_data = XYDataset(feddata['dtest']['x'], feddata['dtest']['y'])
         train_datas = [XYDataset(feddata[name]['dtrain']['x'], feddata[name]['dtrain']['y']) for name in feddata['client_names']]
         valid_datas = [XYDataset(feddata[name]['dvalid']['x'], feddata[name]['dvalid']['y']) for name in feddata['client_names']]
@@ -523,7 +554,7 @@ class IDXTaskReader(BasicTaskReader):
         return train_datas, valid_datas, test_data, feddata['client_names']
 
 class XYDataset(Dataset):
-    def __init__(self, X=[], Y=[], totensor = True):
+    def __init__(self, X=[], Y=[], client_name=None, totensor = True):
         """ Init Dataset with pairs of features and labels/annotations.
         XYDataset transforms data that is list\array into tensor.
         The data is already loaded into memory before passing into XYDataset.__init__()
@@ -544,7 +575,12 @@ class XYDataset(Dataset):
         else:
             self.X = X
             self.Y = Y
-        self.all_labels = list(set(self.tolist()[1]))
+        self.client_name = client_name
+        try:
+            self.all_labels = list(set(self.tolist()[1]))
+        except Exception as e:
+            print("Error:", e)
+            import pdb; pdb.set_trace()
 
         self.X, self.Y = shuffle(self.X,self.Y, random_state = 0)
         # self.X, self.Y = self.X, self.Y
@@ -559,6 +595,7 @@ class XYDataset(Dataset):
         return self.X, self.Y
 
     def tolist(self):
+
         if not isinstance(self.X, torch.Tensor):
             return self.X, self.Y
         return self.X.tolist(), self.Y.tolist()

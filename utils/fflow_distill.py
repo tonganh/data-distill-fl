@@ -113,6 +113,9 @@ def initialize(option):
     task_reader = getattr(importlib.import_module(bmk_core_path), 'TaskReader')(taskpath=os.path.join('fedtask', option['task']))
     print(task_reader)
     train_datas, valid_datas, test_data, client_names = task_reader.read_data()
+
+    print("Training data")
+    print(train_datas[0].get_all_labels())
     num_clients = len(client_names)
     print("done")
 

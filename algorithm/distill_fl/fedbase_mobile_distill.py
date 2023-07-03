@@ -14,6 +14,38 @@ from algorithm.distill_fl.distill_utils.distiller import Distiller
 import os
 from main_distill import logger
 
+import datetime
+import logging
+
+now = datetime.datetime.now()
+formatted_date_time = now.strftime("%Y-%m-%d_%H-%M-%S")
+
+directory_path = "log"  # specify the directory where log files will be saved
+log_file_name = f'{directory_path}/log_kip_fedbase_{formatted_date_time}.log'
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Create a file handler
+file_handler = logging.FileHandler(log_file_name)
+file_handler.setLevel(logging.DEBUG)
+
+# Create a stream handler (for console output)
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(logging.INFO)
+
+# Create a formatter and add it to the handlers
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+stream_handler.setFormatter(formatter)
+
+# Add the handlers to the logger
+logger_anhtn = logging.getLogger('')
+logger_anhtn.addHandler(file_handler)
+logger_anhtn.addHandler(stream_handler)
+
 
 class BasicCloudServer(BasicServer):
     def __init__(self, option, model ,clients,test_data = None):
@@ -299,8 +331,10 @@ class BasicEdge(BasicClient):
                     # print(self.X_all.shape, self.y_all)
 
                 self.split_data()
-                self.train_data = XYDataset(self.X_train, self.y_train)
-                self.valid_data = XYDataset(self.X_valid, self.y_valid)
+                print('Client name debugging: ', client.name)
+                
+                self.train_data = XYDataset(self.X_train, self.y_train, client_name=client.name)
+                self.valid_data = XYDataset(self.X_valid, self.y_valid, client_name=client.name)
                 self.clients_collected.append(client.name)
                 self.datavol = self.X_train.shape[0]
         
@@ -502,11 +536,19 @@ class BasicMobileClient(BasicClient):
     def distill_data(self):
         message = f"Distilling data from client: {self.name}"
         print(message)
+        # import pdb; pdb.set_trace()
         x_train, y_train, x_val, y_val = self.train_data.X, self.train_data.Y, self.valid_data.X, self.valid_data.Y
-        print(x_val,y_val)
+        print(f'Client name: {self.name}')
+        print(f'Check data class for each client. Client: {self.name}')
+        print(set(y_train))
+        logger_anhtn.info(f'Check data class for each client. Client: {self.name}')
+        logger_anhtn.info(set(y_train))
+        # print("Data from client"x_val,y_val)
+        # import pdb; pdb.set_trace()
         self.distiller.distill(X_TRAIN_RAW  = x_train, LABELS_TRAIN = y_train,X_TEST_RAW= x_val,LABELS_TEST= y_val, additional_message=message)
     
     def load_distill_data(self):
+        import pdb;pdb.set_trace()
         self.x_distill = torch.load(os.path.join(self.distill_save_path,'x_distill.pt')).detach().cpu().numpy()
         self.y_distill = torch.load(os.path.join(self.distill_save_path,'y_distill.pt')).detach().cpu().numpy()
 

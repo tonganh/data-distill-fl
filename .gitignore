@@ -19,6 +19,7 @@ results_mobile/
 *.pt
 algorithm/distill_fl/kip/dataset/cifar-10-batches-py/
 *.gz
+/log/*
 # /results_distill
 # /results_distill
 # *.csv
