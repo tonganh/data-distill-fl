@@ -19,6 +19,7 @@ def read_option():
     parser.add_argument('--task', help='name of fedtask;', type=str, default='mnist_cnum100_dist0_skew0_seed0')
     parser.add_argument('--algorithm', help='name of algorithm;', type=str, default='fedavg')
     parser.add_argument('--model', help='name of model;', type=str, default='cnn')
+    parser.add_argument('--dropout_value', help='Value dropout in model;', type=float, default=0.2)
 
     # methods of server side for sampling and aggregating
     parser.add_argument('--sample', help='methods for sampling clients', type=str, choices=sample_list, default='uniform')
@@ -131,7 +132,7 @@ def initialize(option):
     # init server
     print("init server...", end='')
     server_path = '%s.%s' % ('algorithm.distill_fl', option['algorithm'])
-    server = getattr(importlib.import_module(server_path), 'CloudServer')(option, utils.fmodule.Model().to(utils.fmodule.device), clients = clients, test_data = test_data)
+    server = getattr(importlib.import_module(server_path), 'CloudServer')(option, utils.fmodule.Model(dropout_value=option['dropout_value']).to(utils.fmodule.device), clients = clients, test_data = test_data)
     print('done')
     return server    # print('done')
 

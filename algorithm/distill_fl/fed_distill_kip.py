@@ -196,7 +196,8 @@ class MobileClient(BasicMobileClient):
         self.support_size = self.option['kip_support_size']
         self.distill_iters = self.option['distill_iters']
         self.task_name = self.option['task']
-        self.distill_save_path = os.path.join( f'fedtask/{self.task_name}/', self.option['distill_data_path'])
+        self.distill_save_path = os.path.join( f'fedtask/{self.task_name}/', self.option['distill_data_path'],str(self.option['distill_ipc']))
+
         if not os.path.exists(self.distill_save_path):
             os.mkdir(self.distill_save_path)      
         self.distill_save_path = os.path.join(self.distill_save_path,f'{self.name}/')
@@ -211,7 +212,7 @@ class MobileClient(BasicMobileClient):
             self.dataset  = 'CIFAR10'
         elif 'cifar100' in self.option['task']:
             self.dataset = 'CIFAR100'
-        self.distiller = Distiller(SUPPORT_SIZE=self.support_size,TARGET_BATCH_SIZE=100,itr=self.distill_iters, DATASET = self.dataset, save_path = self.distill_save_path)
+        self.distiller = Distiller(SUPPORT_SIZE=self.support_size,TARGET_BATCH_SIZE=10,itr=self.distill_iters, DATASET = self.dataset, save_path = self.distill_save_path,ipc=self.ipc)
 
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,

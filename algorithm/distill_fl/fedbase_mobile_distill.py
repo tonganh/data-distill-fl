@@ -501,10 +501,15 @@ class BasicMobileClient(BasicClient):
         elif  'cifar100' in self.option['task']:
             self.num_classes = 100
         
-        self.ipc = self.option['distill_ipc']
         self.distill_iters = self.option['distill_iters']
         self.task_name = self.option['task']
-        self.distill_save_path = os.path.join( f'fedtask/{self.task_name}/', self.option['distill_data_path'])
+        
+        distill_path_dataset = os.path.join( f'fedtask/{self.task_name}/', self.option['distill_data_path'])
+        if not os.path.exists(distill_path_dataset):
+            os.mkdir(distill_path_dataset)
+            
+        self.distill_save_path = os.path.join( f'fedtask/{self.task_name}/', self.option['distill_data_path'],str(self.option['distill_ipc']))
+
         if not os.path.exists(self.distill_save_path):
             os.mkdir(self.distill_save_path)      
         self.distill_save_path = os.path.join(self.distill_save_path,f'{self.name}/')
@@ -519,6 +524,7 @@ class BasicMobileClient(BasicClient):
             self.dataset  = 'CIFAR10'
         elif 'cifar100' in self.option['task']:
             self.dataset = 'CIFAR100'
+        self.ipc = self.option['distill_ipc']
         self.distiller = Distiller(ipc=self.ipc, iteration=self.distill_iters, dataset = self.dataset, save_path = self.distill_save_path)
         # self.mean_velocity = mean_velocity
         # self.std_velocity = std_velocity
@@ -544,11 +550,10 @@ class BasicMobileClient(BasicClient):
         logger_anhtn.info(f'Check data class for each client. Client: {self.name}')
         logger_anhtn.info(set(y_train))
         # print("Data from client"x_val,y_val)
-        # import pdb; pdb.set_trace()
-        self.distiller.distill(X_TRAIN_RAW  = x_train, LABELS_TRAIN = y_train,X_TEST_RAW= x_val,LABELS_TEST= y_val, additional_message=message)
+        self.distiller.distill(X_TRAIN_RAW  = x_train, LABELS_TRAIN = y_train,X_TEST_RAW= x_val,
+                               LABELS_TEST= y_val, additional_message=message)
     
     def load_distill_data(self):
-        import pdb;pdb.set_trace()
         self.x_distill = torch.load(os.path.join(self.distill_save_path,'x_distill.pt')).detach().cpu().numpy()
         self.y_distill = torch.load(os.path.join(self.distill_save_path,'y_distill.pt')).detach().cpu().numpy()
 

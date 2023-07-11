@@ -84,7 +84,7 @@ jax_config.update('jax_enable_x64', True)
 class Distiller():
     def __init__(self, itr=300, ARCHITECTURE='FC', DEPTH=1, WIDTH=1024,
                  PARAMETERIZATION='ntk', DATASET='cifar10', LEARNING_RATE=4e-2,
-                 SUPPORT_SIZE=100, TARGET_BATCH_SIZE=5000, LEARN_LABELS=False,save_path='results_kip'):
+                 SUPPORT_SIZE=100, TARGET_BATCH_SIZE=5000, LEARN_LABELS=False,save_path='results_kip', ipc=1):
         self.itr = itr
         self.ARCHITECTURE = ARCHITECTURE
         self.DEPTH = DEPTH
@@ -96,6 +96,7 @@ class Distiller():
         self.TARGET_BATCH_SIZE = TARGET_BATCH_SIZE
         self.LEARN_LABELS = LEARN_LABELS
         self.save_path = save_path
+        self.ipc = ipc
 
 
     def save_image_synthetic(self, sample_raw: np.ndarray, sample_init: np.ndarray, sample_final:np.ndarray, num_classes: int):
@@ -343,27 +344,43 @@ class Distiller():
         #     )
         if kwargs.get('seed') is not None:
             np.random.seed(kwargs['seed'])
-        min_value_in_class = 999
-        class_have_min_value = None
-        for c in classes:
-            size_of_this_class = np.where(labels == c)[0].size
-            if size_of_this_class < min_value_in_class:
-                min_value_in_class = size_of_this_class
-                class_have_min_value = c
-        if min_value_in_class < 20:
-            new_classes = [c for c in classes if c != class_have_min_value]
-            classes = new_classes
+
+        # !Tạm thời bỏ(start)
+        # min_value_in_class = 999
+        # class_have_min_value = None
+        # for c in classes:
+        #     size_of_this_class = np.where(labels == c)[0].size
+        #     if size_of_this_class < min_value_in_class:
+        #         min_value_in_class = size_of_this_class
+        #         class_have_min_value = c
+        # if min_value_in_class < 20:
+        #     new_classes = [c for c in classes if c != class_have_min_value]
+        #     classes = new_classes
         
         min_value_in_class = 999
         for c in classes:
             size_of_this_class = np.where(labels == c)[0].size
             if size_of_this_class < min_value_in_class:
                 min_value_in_class = size_of_this_class
-                class_have_min_value = c        
         
-        # Gán giá trị cho X và làm tròn
-        n_per_class = round((2/3) * min_value_in_class)
-        # print('n_per_class', n_per_class)
+        # # Gán giá trị cho X và làm tròn
+        # if n_per_class > class_have_min_value:
+        #     n_per_class = round((2/3) * min_value_in_class)
+        # # !code cũ
+        # # import pdb; pdb.set_trace()
+        # n_per_class = round((2/3) * min_value_in_class)
+        
+        # if n_per_class > class_have_min_value:
+        #     n_per_class = round((2/3) * min_value_in_class)
+        # # if kwargs.get('distill_ipc') is not None:
+        # #     if n_per_class > self.ipc:
+        # #         n_per_class = self.ipc
+        # !Tạm thời bỏ (end)
+
+        if kwargs.get('distill_ipc') is not None and kwargs.get('distill_ipc'):
+            n_per_class = self.ipc
+            # n_per_class = round((1/15) * min_value_in_class)
+        # # print('n_per_class', n_per_class)
         if kwargs.get('save_img_mode') is not None:
             # n_per_class = classes.size
             # print(f'n_per_class: {n_per_class}')
@@ -516,7 +533,9 @@ class Distiller():
         if isinstance(LABELS_TEST, torch.Tensor):
             LABELS_TEST = LABELS_TEST.numpy()
 
+        print('Labels train')
         self.logging_input_dataset(LABELS_TRAIN)
+        print('Labels test')
         self.logging_input_dataset(LABELS_TEST)
 
         test_loss_arr = []
@@ -538,7 +557,7 @@ class Distiller():
         channel_means, channel_stds = self.get_normalization_data(X_TRAIN_RAW)
 
         _, _,labels_init, x_init_raw, y_init = self.class_balanced_sample(
-            self.SUPPORT_SIZE, LABELS_TRAIN, X_TRAIN_RAW, Y_TRAIN, seed=seed, plot=True)
+            self.SUPPORT_SIZE, LABELS_TRAIN, X_TRAIN_RAW, Y_TRAIN, seed=seed, plot=True, distill_ipc=True)
         x_init = self.normalize(
             x_init_raw, channel_means, channel_stds)
         params_init = {'x': x_init, 'y': y_init}
@@ -580,6 +599,7 @@ class Distiller():
                 print('train acc:', train_acc)
                 print(additional_message)
                 logger.info(additional_message)
+                logger.info(f'----step {i}:')
                 logger.info(f'train loss: {train_loss}')
                 logger.info(f'train acc: {train_acc}')
 

@@ -29,6 +29,8 @@ import torch
 ssl._create_default_https_context = ssl._create_unverified_context
 import importlib
 from sklearn.utils import shuffle
+from tqdm import tqdm
+
 
 def set_random_seed(seed=0):
     """Set random seed"""
@@ -180,6 +182,55 @@ class DefaultTaskGen(BasicTaskGen):
         """ load and pre-process the raw data"""
         return
 
+    def divide_data_balance(self, num_local_class=10, i_seed=0):
+        torch.manual_seed(i_seed)
+
+        config_division = {}  # Count of the classes for division
+        config_class = {}  # Configuration of class distribution in clients
+        config_data = {}  # Configuration of data indexes for each class : Config_data[cls] = [0, []] | pointer and indexes
+
+        for i in range(self.num_clients):
+            config_class['f_{0:05d}'.format(i)] = []
+            for j in range(num_local_class):
+                cls = (i+j) % self.num_classes
+                if cls not in config_division:
+                    config_division[cls] = 1
+                    config_data[cls] = [0, []]
+
+                else:
+                    config_division[cls] += 1
+                config_class['f_{0:05d}'.format(i)].append(cls)
+        dpairs = [[did, self.train_data[did][-1]] for did in range(len(self.train_data))]
+        train_targets = torch.tensor([p[1] for p in dpairs])
+
+        for cls in config_division.keys():
+            indexes = torch.nonzero(train_targets == cls)
+            num_datapoint = indexes.shape[0]
+            indexes = indexes[torch.randperm(num_datapoint)]
+            num_partition = num_datapoint // config_division[cls]
+
+            for i_partition in range(config_division[cls]):
+                if i_partition == config_division[cls] - 1:
+                    config_data[cls][1].append(indexes[i_partition * num_partition:])
+                else:
+                    config_data[cls][1].append(indexes[i_partition * num_partition: (i_partition + 1) * num_partition])
+
+        local_datas_in_def = [[] for i in range(self.num_clients)]
+        index_client = 0
+        import pdb; pdb.set_trace()
+        for user in tqdm(config_class.keys()):
+            user_data_indexes = torch.tensor([])
+            for cls in config_class[user]:
+                # !config_data[cls][0] auto là số 0 :| , [1] là các array chia cho data đó
+                user_data_index = config_data[cls][1][config_data[cls][0]]
+                user_data_indexes = torch.cat((user_data_indexes, user_data_index))
+                config_data[cls][0] += 1
+                # print(len(user_data_indexes))
+            indexs_of_user = [int(i[0]) for i in user_data_indexes.tolist()]
+            local_datas_in_def[index_client] = indexs_of_user
+            index_client+=1
+        return local_datas_in_def
+
     def partition(self):
         # Partition self.train_data according to the delimiter and return indexes of data owned by each client as [c1data_idxs, ...] where the type of each element is list(int)
         if self.dist_id == 0:
@@ -310,7 +361,14 @@ class DefaultTaskGen(BasicTaskGen):
                 minv = np.min(proportions * len(self.train_data))
             proportions = (np.cumsum(proportions) * len(d_idxs)).astype(int)[:-1]
             local_datas  = np.split(d_idxs, proportions)
-        
+
+
+
+        elif self.dist_id == 7:
+           local_datas = self.divide_data_balance(num_local_class=2)
+        elif self.dist_id == 8:
+           local_datas = self.divide_data_balance(num_local_class=10)
+                    
         
         return local_datas
 
