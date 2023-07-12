@@ -111,7 +111,8 @@ class BasicCloudServer(BasicServer):
         print(f'Before delete, total clients is: {len(self.clients)}')
         self.clients = clients_after_delete
         print(f'After delete, total clients is: {len(self.clients)}')
-        self.deleted_clients_name = removed_clients_names
+        self.deleted_clients_name.extend(removed_clients_names)
+        print(f'Name deleted client: {deleted_clients_name}')
         return removed_clients_names
 
 
