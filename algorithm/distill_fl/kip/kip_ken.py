@@ -39,7 +39,7 @@ logging.basicConfig(
 
 # Create a file handler
 file_handler = logging.FileHandler(log_file_name)
-file_handler.setLevel(logging.DEBUG)
+# file_handler.setLevel(logging.DEBUG)
 
 # Create a stream handler (for console output)
 stream_handler = logging.StreamHandler()
@@ -519,7 +519,7 @@ class Distiller():
             # Write data rows
             writer.writerows(rows)
 
-    def distill(self, log_freq=20, seed=1,  X_TRAIN_RAW=None, LABELS_TRAIN=None, X_TEST_RAW=None, LABELS_TEST=None,additional_message = None):
+    def distill(self, log_freq=5, seed=1,  X_TRAIN_RAW=None, LABELS_TRAIN=None, X_TEST_RAW=None, LABELS_TEST=None,additional_message = None):
 
         if isinstance(X_TRAIN_RAW, torch.Tensor):
             X_TRAIN_RAW = X_TRAIN_RAW.numpy()
@@ -594,24 +594,21 @@ class Distiller():
             train_loss, train_acc = aux
             params = get_params(opt_state)
             if i % log_freq == 0:
-                print(f'----step {i}:')
-                print('train loss:', train_loss)
-                print('train acc:', train_acc)
-                print(additional_message)
-                logger.info(additional_message)
-                logger.info(f'----step {i}:')
-                logger.info(f'train loss: {train_loss}')
-                logger.info(f'train acc: {train_acc}')
-
-                train_loss_arr.append(train_loss)
-                train_acc_arr.append(train_acc)
-
                 # compute in batches for expensive kernels
                 test_loss, (test_acc, y_pred, y_target) = loss_acc_fn(
                     params['x'], params['y'], X_TEST, Y_TEST)
 
 
                 if test_acc > best_val_result:
+                    logger.info(additional_message)
+                    logger.info(f'----step {i}:')
+                    logger.info(f'train loss: {train_loss}')
+                    logger.info(f'train acc: {train_acc}')
+                    train_loss_arr.append(train_loss)
+                    train_acc_arr.append(train_acc)
+                    test_loss_arr.append(test_loss)
+                    test_acc_arr.append(test_acc)
+                    
                     best_val_result = test_acc
                     # x_tensor = torch.tensor(params['x'])
                     best_data_synthetic = params
@@ -631,8 +628,7 @@ class Distiller():
                 # test_loss, test_acc = loss_acc_fn(
                 #     params['x'], params['y'], X_TEST, Y_TEST)
 
-                test_loss_arr.append(test_loss)
-                test_acc_arr.append(test_acc)
+
                 
                 logger.info(f'test loss {test_loss}')
                 logger.info(f'test acc {test_acc}')

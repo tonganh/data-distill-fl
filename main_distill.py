@@ -23,6 +23,7 @@ class MyLogger(flw.Logger):
                 "valid_accs":[],
                 "client_accs":{},
                 "mean_valid_accs":[],
+                "total_transfer_size":[],
             }
         if "mp_" in server.name:
             test_metric, test_loss = server.test(device=torch.device('cuda:0'))
@@ -33,11 +34,12 @@ class MyLogger(flw.Logger):
 
         # print(len(valid_metrics), len(valid_losses))
         # print(len(train_metrics), len(train_losses))
-
         self.output['train_losses'] = server.avg_edge_train_losses
         self.output['valid_losses'] = server.avg_edge_valid_losses
         self.output['train_accs'] = server.avg_edge_train_metrics
         self.output['valid_accs'] = server.avg_edge_valid_metrics
+        self.output['total_transfer_size'] = server.avg_edge_total_transfer_size
+        
         self.output['test_accs'].append(test_metric)
         self.output['test_losses'].append(test_loss)
         # self.output['mean_valid_accs'].append(sum([acc for acc in valid_metrics]) / len([acc for acc in valid_metrics]))        
@@ -51,6 +53,7 @@ class MyLogger(flw.Logger):
         print(self.temp.format("Training Accuracy:", self.output['train_accs'][-1]))
         print(self.temp.format("Validating Accuracy:", self.output['valid_accs'][-1]))
         print(self.temp.format("Testing Accuracy:", self.output['test_accs'][-1]))
+        print(self.temp.format("Total Transfer data:", self.output['total_transfer_size'][-1]))
 
         # dataset = server['task']
         if not os.path.exists('results_distill'.format(server.option['task'])):
@@ -67,7 +70,7 @@ class MyLogger(flw.Logger):
                                                                                 server.option['distill_ipc'])
     
         
-        experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_loss','train_acc', 'val_acc'])
+        experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_loss','train_acc', 'val_acc','total_transfer_size'])
         experiment_df['round'] = [i for i in range(len(self.output['test_accs']))]
         experiment_df['test_acc'] = self.output['test_accs']
         experiment_df['test_loss'] = self.output['test_losses']
@@ -75,6 +78,8 @@ class MyLogger(flw.Logger):
         experiment_df['val_loss'] = self.output['valid_losses']
         experiment_df['val_acc'] = self.output['valid_accs']
         experiment_df['train_acc'] =  self.output['train_accs']
+        experiment_df['total_transfer_size'] =  self.output['total_transfer_size']
+        
         experiment_df.to_csv(test_results_path,index=False)
 
         task_name = server.option['task']

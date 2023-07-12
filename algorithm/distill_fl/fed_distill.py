@@ -53,6 +53,7 @@ class CloudServer(BasicCloudServer):
 
         self.selected_clients = self.sample()
         print("Selected clients", len(self.selected_clients))
+        print("Transfer data of client selected", len(self.selected_clients))
 
         # first, aggregate the edges with their clientss
         # for client in self.selected_clients:

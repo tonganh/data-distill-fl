@@ -28,6 +28,7 @@ class CloudServer(BasicCloudServer):
         self.avg_edge_valid_losses = []
         self.avg_edge_train_metrics = []
         self.avg_edge_valid_metrics = []
+        self.avg_edge_total_transfer_size = []
         self.edge_metrics = {}
 
     def iterate(self, t):
@@ -53,10 +54,13 @@ class CloudServer(BasicCloudServer):
 
         self.selected_clients = self.sample()
         print("Selected clients", len(self.selected_clients))
+        print("Transfer data of client selected", len(self.selected_clients))
+
 
         # first, aggregate the edges with their clientss
         # for client in self.selected_clients:
         #     client.print_client_info()
+        all_total_transfer_size = []
         for edge in self.edges:
             aggregated_clients = []
             for client in self.selected_clients:
@@ -64,6 +68,8 @@ class CloudServer(BasicCloudServer):
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
                 edge.collect_distilled_data_from_client(aggregated_clients)
+                all_total_transfer_size.append(edge.total_transfer_size)
+            
         
         
         models, (edge_names, train_losses, valid_losses, train_acc, valid_acc) = self.communicate(self.edges)
@@ -93,7 +99,7 @@ class CloudServer(BasicCloudServer):
         self.avg_edge_valid_losses.append(sum(all_edge_valid_losses) / len(all_edge_valid_losses))
         self.avg_edge_train_metrics.append(sum(all_edge_train_metrics) / len(all_edge_train_metrics))
         self.avg_edge_valid_metrics.append(sum(all_edge_valid_metrics) / len(all_edge_valid_metrics))
-
+        self.avg_edge_total_transfer_size.append(sum(all_total_transfer_size))
 
         
             # else:
@@ -113,6 +119,11 @@ class CloudServer(BasicCloudServer):
 
             for edge in self.edges:
                 edge.model = copy.deepcopy(self.model)
+        num_iterations_start_remove = 50
+        num_clients_removed = 2
+        after_num_itr_remove = 5
+        if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
+            self.delete_clients(num_clients_removed)
 
 
     def sample(self):
@@ -175,6 +186,7 @@ class EdgeServer(BasicEdge):
         self.clients = []
 
     def update_client_list(self,clients):
+        import pdb; pdb.set_trace()
         self.clients = clients
     
     def print_edge_info(self):
@@ -197,6 +209,7 @@ class MobileClient(BasicMobileClient):
         self.distill_iters = self.option['distill_iters']
         self.task_name = self.option['task']
         self.distill_save_path = os.path.join( f'fedtask/{self.task_name}/', self.option['distill_data_path'],str(self.option['distill_ipc']))
+        self.total_size = 0
 
         if not os.path.exists(self.distill_save_path):
             os.mkdir(self.distill_save_path)      
@@ -217,9 +230,24 @@ class MobileClient(BasicMobileClient):
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
+    def get_size_of_data(self, path_get_size, message='None'):
+        file_stats = os.stat(path_get_size)
+        bytes_size = file_stats.st_size
+        print(f'{self.name} - {message} - {bytes_size} Bytes')
+        return file_stats.st_size
     
+    def calculate_total_size(self):
+        file_path_x = os.path.join(self.distill_save_path,'x_distill.pt')
+        file_path_y = os.path.join(self.distill_save_path,'y_distill.pt')
+        size_of_x = self.get_size_of_data(file_path_x, 'x')
+        size_of_y = self.get_size_of_data(file_path_y,'y')
+        self.total_size = size_of_x + size_of_y
+
+
     def load_distill_data(self):
+        self.calculate_total_size()
         self.x_distill = torch.load(os.path.join(self.distill_save_path,'x_distill.pt'))
         self.y_distill = torch.load(os.path.join(self.distill_save_path,'y_distill.pt'))
+        
         print(self.x_distill, self.y_distill)
 

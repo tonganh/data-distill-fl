@@ -70,6 +70,7 @@ class BasicCloudServer(BasicServer):
         # self.sample_with_replacement = option['sample_with_replacement']
         self.client_edge_mapping = {}
         self.unused_clients_queue = []
+        self.deleted_clients_name  = []
 
         self.option = option
 
@@ -89,6 +90,30 @@ class BasicCloudServer(BasicServer):
         print("First, distill data from clients' side")
         for client in self.clients:
             client.distill_data()
+    
+    def get_clients_names(self):
+        clients_name = [client.name for client in self.clients]
+        return clients_name
+
+
+    def delete_clients(self, count_remove_clients):
+        clients_after_delete = random.sample(self.clients, k=len(self.clients)-count_remove_clients)
+        clients_name_initial = [client.name for client in self.clients]
+        clients_name_deleted = [client.name for client in clients_after_delete]
+        
+        # Tạo tập hợp các tên khách hàng duy nhất
+        clients_name_initial_set = set(clients_name_initial)
+        clients_name_deleted_set = set(clients_name_deleted)
+        
+        # Lấy danh sách các tên khách hàng đã bị xóa
+        removed_clients_names = list(clients_name_initial_set - clients_name_deleted_set)
+        
+        print(f'Before delete, total clients is: {len(self.clients)}')
+        self.clients = clients_after_delete
+        print(f'After delete, total clients is: {len(self.clients)}')
+        self.deleted_clients_name = removed_clients_names
+        return removed_clients_names
+
 
     def run(self):
         """
@@ -142,7 +167,7 @@ class BasicCloudServer(BasicServer):
                     self.client_edge_mapping[edge_name].append(client.name)
         # print(self.client_edge_mapping)
                     # print(self.client_edge_mapping)
-        
+
     def update_client_list(self):
         filtered_client_list = []
         filtered = 0
@@ -157,6 +182,7 @@ class BasicCloudServer(BasicServer):
                 # print(False)
         # print("Number of filtered clients",filtered)
         self.clients = filtered_client_list
+        clients_names  = self.get_clients_names()
         if len(self.clients) < self.mean_num_clients - self.std_num_clients:
             self.current_num_clients = np.random.randint(low = self.mean_num_clients - self.std_num_clients, high=self.mean_num_clients+self.std_num_clients + 1,
                                                         size=1)[0]
@@ -165,13 +191,24 @@ class BasicCloudServer(BasicServer):
                 clients_to_readd = random.sample(self.unused_clients_queue, k = num_clients_to_readd)
                 for client in clients_to_readd:
                     client.location =np.random.randint( self.left_road_limit, self.right_road_limit, size =1)[0]
-                    self.clients.append(client)
+                    client_name = client.name
+                    if client_name not in clients_names and client_name not in self.deleted_clients_name:
+                        self.clients.append(client)
+                        clients_names.append(client_name)
+                        print(f'Line 175 - {len(self.clients)}')
                     # client.location = client
             else:
                 clients_to_readd = self.unused_clients_queue
                 for client in clients_to_readd:
                     client.location =np.random.randint( self.left_road_limit, self.right_road_limit, size =1)[0]
-                    self.clients.append(client)
+                    client_name = client.name
+                    if client_name not in clients_names and client_name not in self.deleted_clients_name:
+                        self.clients.append(client)
+                        clients_names.append(client_name)
+                        print(f'Line 208 - {len(self.clients)}')
+                        
+        if len(self.clients) > 100:
+            import pdb; pdb.set_trace()
 
     def get_current_num_clients(self):
         self.current_num_clients = np.random.randint()
@@ -309,6 +346,7 @@ class BasicEdge(BasicClient):
         self.train_data = None
         self.valid_data = None
         self.clients_collected  = []
+        self.total_transfer_size = 0
         # self.list_clients = []
     
     def split_data(self):
@@ -318,9 +356,10 @@ class BasicEdge(BasicClient):
         # print(self.X_train.shape, self.X_valid.shape, self.y_train.shape)
     def collect_distilled_data_from_client(self, clients: List[BasicClient]):
         # Update x_all and y_all by appending client's distill data, if client not already sent
+        total_transfer_in_round = 0
         for client in clients:
             if client.name not in self.clients_collected:
-
+                total_transfer_in_round   += client.total_size
                 if self.X_all.size == 0:
                     self.X_all = client.x_distill
                     self.y_all = client.y_distill
@@ -332,11 +371,14 @@ class BasicEdge(BasicClient):
 
                 self.split_data()
                 print('Client name debugging: ', client.name)
+                print('Client transfer data: ', client.total_size)
                 
                 self.train_data = XYDataset(self.X_train, self.y_train, client_name=client.name)
                 self.valid_data = XYDataset(self.X_valid, self.y_valid, client_name=client.name)
                 self.clients_collected.append(client.name)
                 self.datavol = self.X_train.shape[0]
+        self.total_transfer_size = total_transfer_in_round
+
         
     def train(self):
         """
