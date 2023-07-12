@@ -41,7 +41,12 @@ class CloudServer(BasicCloudServer):
         # First, distill all data on clients' side
         # for client in self.clients:
         #     client.distill_data()
-
+        
+        num_iterations_start_remove = 50
+        num_clients_removed = 2
+        after_num_itr_remove = 5
+        if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
+            self.delete_clients(num_clients_removed)
 
         # sample clients: MD sampling as default but with replacement=False
         # print("Iterating")
@@ -119,11 +124,6 @@ class CloudServer(BasicCloudServer):
 
             for edge in self.edges:
                 edge.model = copy.deepcopy(self.model)
-        num_iterations_start_remove = 50
-        num_clients_removed = 2
-        after_num_itr_remove = 5
-        if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
-            self.delete_clients(num_clients_removed)
 
 
     def sample(self):

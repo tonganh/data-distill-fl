@@ -370,6 +370,7 @@ class EdgeServer(BasicEdgeServer):
         self.clients = []
 
     def update_client_list(self,clients):
+        import pdb; pdb.set_trace()
         self.clients = clients
     
     def get_data(self):

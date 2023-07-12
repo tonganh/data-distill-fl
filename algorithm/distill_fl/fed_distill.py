@@ -176,6 +176,7 @@ class EdgeServer(BasicEdge):
         self.clients = []
 
     def update_client_list(self,clients):
+        import pdb; pdb.set_trace()
         self.clients = clients
     
     def print_edge_info(self):
