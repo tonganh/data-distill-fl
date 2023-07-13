@@ -62,12 +62,13 @@ class MyLogger(flw.Logger):
         if not os.path.exists('results_distill/{}'.format(server.option['task'])):
             os.mkdir('results_distill/{}'.format(server.option['task']))
 
-        if not os.path.exists('results_distill/{}/ipc_{}'.format(server.option['task'],
-                                                                                server.option['distill_ipc'])):
-            os.mkdir('results_distill/{}/ipc_{}'.format(server.option['task'],server.option['distill_ipc']))
 
-        test_results_path = 'results_distill/{}/ipc_{}/test_results.csv'.format(server.option['task'], 
-                                                                                server.option['distill_ipc'])
+        path_save_data = 'results_distill/{}/ipc_{}_velocity_{}'.format(server.option['task'],
+                                                                                server.option['distill_ipc'], server.option['mean_velocity'])
+        if not os.path.exists(path_save_data):
+            os.mkdir(path_save_data)
+
+        test_results_path = '{}/test_results.csv'.format(path_save_data)
     
         
         experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_loss','train_acc', 'val_acc','total_transfer_size'])
@@ -88,7 +89,7 @@ class MyLogger(flw.Logger):
             ipc = server.option['distill_ipc']
             client_train_results = server.edge_metrics[edge.name]
             client_df = pd.DataFrame(client_train_results)
-            client_save_path = f'results_distill/{task_name}/ipc_{ipc}/{edge_name}.csv'
+            client_save_path = f'{path_save_data}/{edge_name}.csv'
             client_df.to_csv(client_save_path, index=False)
 
 
