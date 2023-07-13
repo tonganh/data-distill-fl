@@ -8,7 +8,7 @@ import os
 import utils.fmodule
 import ujson
 import time
-
+import torch.nn as nn
 sample_list=['uniform', 'md', 'active']
 agg_list=['uniform', 'weighted_scale', 'weighted_com', 'none']
 optimizer_list=['SGD', 'Adam']
@@ -127,7 +127,7 @@ def initialize(option):
 
     # init client
     print('init clients...', end='')
-    client_path = '%s.%s' % ('algorithm.hier_fl', option['algorithm'])
+    client_path = '%s.%s' % ('algorithm.mobile_fl', option['algorithm'])
     Client=getattr(importlib.import_module(client_path), 'MobileClient')
     clients = [Client(option, name = client_names[cid], train_data = train_datas[cid], valid_data = valid_datas[cid]) for cid in range(num_clients)]
     print('done')
@@ -136,7 +136,7 @@ def initialize(option):
 
     # init server
     print("init server...", end='')
-    server_path = '%s.%s' % ('algorithm.hier_fl', option['algorithm'])
+    server_path = '%s.%s' % ('algorithm.mobile_fl', option['algorithm'])
     server = getattr(importlib.import_module(server_path), 'CloudServer')(option, utils.fmodule.Model().to(utils.fmodule.device), clients = clients, test_data = test_data)
     print('done')
     return server    # print('done')

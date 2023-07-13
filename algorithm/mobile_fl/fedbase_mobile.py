@@ -44,7 +44,26 @@ class BasicCloudServer(BasicServer):
         self.client_train_metrics = []
         self.client_valid_metrics = []
 
-    
+
+    def delete_clients(self, count_remove_clients):
+        clients_after_delete = random.sample(self.clients, k=len(self.clients)-count_remove_clients)
+        clients_name_initial = [client.name for client in self.clients]
+        clients_name_deleted = [client.name for client in clients_after_delete]
+        
+        # Tạo tập hợp các tên khách hàng duy nhất
+        clients_name_initial_set = set(clients_name_initial)
+        clients_name_deleted_set = set(clients_name_deleted)
+        
+        # Lấy danh sách các tên khách hàng đã bị xóa
+        removed_clients_names = list(clients_name_initial_set - clients_name_deleted_set)
+        
+        print(f'Before delete, total clients is: {len(self.clients)}')
+        self.clients = clients_after_delete
+        print(f'After delete, total clients is: {len(self.clients)}')
+        self.deleted_clients_name.extend(removed_clients_names)
+        print(f'Name deleted client: {self.deleted_clients_name}')
+        return removed_clients_names
+
     def global_update_location(self):
         new_client_list = []
         for client in self.clients:
