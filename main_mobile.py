@@ -39,6 +39,7 @@ class MyLogger(flw.Logger):
         self.output['valid_losses'] = server.client_valid_losses
         self.output['train_accs'] = server.client_train_metrics
         self.output['valid_accs'] = server.client_valid_metrics
+        self.output['communication_cost'] = server.client_communication_cost
         self.output['test_accs'].append(test_metric)
         self.output['test_losses'].append(test_loss)
         # self.output['mean_valid_accs'].append(sum([acc for acc in valid_metrics]) / len([acc for acc in valid_metrics]))        
@@ -52,16 +53,21 @@ class MyLogger(flw.Logger):
         print(self.temp.format("Training Accuracy:", self.output['train_accs'][-1]))
         print(self.temp.format("Validating Accuracy:", self.output['valid_accs'][-1]))
         print(self.temp.format("Testing Accuracy:", self.output['test_accs'][-1]))
+        print(self.temp.format("Communication cost:", self.output['communication_cost'][-1]))
 
         if not os.path.exists('results_mobile'):
             os.mkdir('results_mobile')
 
         # dataset = server['task']
-        if not os.path.exists('results_mobile/{}'.format(server.option['task'])):
-            os.mkdir('results_mobile/{}'.format(server.option['task']))
+        path_as_task = 'results_mobile/{}'.format(server.option['task'])
+        if not os.path.exists(path_as_task):
+            os.mkdir(path_as_task)
+        path_as_freq = '{}/edge_freq_{}'.format(path_as_task,server.option['edge_update_frequency'])
+        if not os.path.exists(path_as_freq):
+            os.mkdir(path_as_freq)
 
         if server.option['algorithm']  in ['ensemble_edgeavg', 'ensemble_raw_avg'] :
-            csv_path = 'results_mobile/{}/{}_w_algox{}_vx{}_freqx{}_num_edgex{}_num_epochsx{}_proportionx{}.csv'.format(server.option['task'],  
+            csv_path = '{}/{}_w_algox{}_vx{}_freqx{}_num_edgex{}_num_epochsx{}_proportionx{}.csv'.format(path_as_freq,
                                                                                     server.option['global_ensemble_weights'],
                                                                                     server.option['algorithm'],
                                                                                     server.option['mean_velocity'],
@@ -73,8 +79,8 @@ class MyLogger(flw.Logger):
 
         elif server.option['algorithm'] in[ 'fed_mobile_distill', 'fed_distill_global', 'fed_distill_mse'] :
 
-            csv_path = 'results_mobile/{}/_alpha{}_temperature_algox{}_vx{}_freqx{}_num_edgex{}_num_epochsx{}_proportionx{}.csv'.format(
-                                                                                    server.option['task'],
+            csv_path = '{}/alpha{}_temperature_algox{}_vx{}_freqx{}_num_edgex{}_num_epochsx{}_proportionx{}.csv'.format(
+                                                                                    path_as_freq,
                                                                                     server.option['distill_alpha'],
                                                                                     server.option['distill_temperature'],
                                                                                     server.option['task'],  
@@ -86,8 +92,9 @@ class MyLogger(flw.Logger):
                                                                                     server.option['proportion'])
 
         else:
-            csv_path = 'results_mobile/{}/algox{}_vx{}_freqx{}_num_edgex{}_num_epochsx{}_proportionx{}.csv'.format(server.option['task'],  
-                                                                                server.option['algorithm'],
+            csv_path = '{}/algox{}_vx{}_freqx{}_num_edgex{}_num_epochsx{}_proportionx{}.csv'.format(
+                                                                                    path_as_freq,
+                                                                                    server.option['algorithm'],
                                                                                     server.option['mean_velocity'],
                                                                                     server.option['edge_update_frequency'],
                                                                                     server.option['num_edges'],
@@ -96,7 +103,6 @@ class MyLogger(flw.Logger):
         
 
             
-        
         experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_loss','train_acc', 'val_acc'])
         experiment_df['round'] = [i for i in range(len(self.output['test_accs']))]
         experiment_df['test_acc'] = self.output['test_accs']
@@ -105,6 +111,7 @@ class MyLogger(flw.Logger):
         experiment_df['val_loss'] = self.output['valid_losses']
         experiment_df['val_acc'] = self.output['valid_accs']
         experiment_df['train_acc'] =  self.output['train_accs']
+        experiment_df['communication_cost'] =  self.output['communication_cost']
 
 
 

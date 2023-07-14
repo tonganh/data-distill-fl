@@ -17,6 +17,7 @@ from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
 from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
 import torch.nn as nn
+from torchsummary import summary
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,clients,test_data = None):
@@ -46,6 +47,13 @@ class CloudServer(BasicCloudServer):
         # save results as .json file
         # logger.save(os.path.join('fedtask', self.option['task'], 'record', flw.output_filename(self.option, self)))
 
+
+    def get_model_size(self, model):
+        num_params = sum(p.numel() for p in model.parameters())
+        # Mỗi tham số là một số thực dấu chấm động 32 bit, tức là 4 byte
+        num_bytes = num_params * 4
+        return num_bytes
+    
     def iterate(self, t):
         """
         The standard iteration of each federated round that contains three
@@ -59,7 +67,7 @@ class CloudServer(BasicCloudServer):
 
         num_iterations_start_remove = 50
         num_clients_removed = 2
-        after_num_itr_remove = 5
+        after_num_itr_remove = 2
         if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
             self.delete_clients(num_clients_removed)
 
@@ -84,6 +92,8 @@ class CloudServer(BasicCloudServer):
         all_client_train_metrics = []
         all_client_valid_metrics = []
 
+        communication_cost_in_round = 0
+
         for edge in self.edges:
 
             # print(f"Edge: {edge.name} - clients {self.client_edge_mapping[edge.name]}" )
@@ -98,15 +108,22 @@ class CloudServer(BasicCloudServer):
                 if client.name in clients_chosen_in_edge:
                     aggregated_clients.append(client)
             if len(aggregated_clients) > 0:
-                # print(aggregated_clients)
-                # print(edge.communicate(aggregated_clients))
+                # communication_cost = len(aggregated_clients_models) * 2 * size(aggregated_client_models[0])
+                # edge2client += communication_cost
                 aggregated_clients_models , (agg_clients_train_losses, 
                                              agg_clients_valid_losses, 
                                              agg_clients_train_accs, 
                                              agg_clients_valid_accs)= edge.communicate(aggregated_clients)
                 
+                total_size_edge_1side_cloud = sum(self.get_model_size(model) for model in aggregated_clients_models)
+                # !nhân 2 vì có cả chiều đi và chiều về
+                communication_cost_edge_cloud = total_size_edge_1side_cloud *2
+                communication_cost_in_round += communication_cost_edge_cloud
+
+                
                 edge_total_datavol = sum([client.datavol for client in aggregated_clients])
                 edge.total_datavol = edge_total_datavol
+        
                 aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
                 # print(len(aggregation_weights), len(aggregated_clients_models))
                 edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
@@ -120,7 +137,6 @@ class CloudServer(BasicCloudServer):
         self.client_valid_losses.append(sum(all_client_valid_losses) / len(all_client_valid_losses))
         self.client_train_metrics.append(sum(all_client_train_metrics) / len(all_client_train_metrics))
         self.client_valid_metrics.append(sum(all_client_valid_metrics) / len(all_client_valid_metrics))
-
             # else:
             #     print('No aggregated clients')
         # models, train_losses = self.communicate(self.edges)
@@ -131,13 +147,24 @@ class CloudServer(BasicCloudServer):
         # aggregate: pk = 1/K as default where K=len(selected_clients)
         # models = [edge.model for edge in self.edges]
         if t % self.edge_update_frequency == 0:
+            
+            # communication_cost = len(model) * 2 * size(models[0])  edg2cloud = communication_cost
             models = [edge.model for edge in self.edges]
+            total_size_edge_1side_cloud = sum(self.get_model_size(model) for model in models)
+            # !nhân 2 vì có cả chiều đi và chiều về
+            communication_cost_edge_cloud = total_size_edge_1side_cloud *2
+            communication_cost_in_round += communication_cost_edge_cloud
+            
             sum_datavol = sum([edge.total_datavol for edge in self.edges])
             edge_weights = [edge.total_datavol / sum_datavol for edge in self.edges]
+
             self.model = self.aggregate(models, p = edge_weights)
 
             for edge in self.edges:
                 edge.model = copy.deepcopy(self.model)
+
+        self.client_communication_cost.append(communication_cost_in_round)
+
 
         edges_models_list = []
         for edge in self.edges:

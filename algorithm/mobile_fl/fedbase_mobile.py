@@ -43,6 +43,8 @@ class BasicCloudServer(BasicServer):
         self.client_valid_losses = []
         self.client_train_metrics = []
         self.client_valid_metrics = []
+        self.client_communication_cost = []
+        self.deleted_clients_name = []
 
 
     def delete_clients(self, count_remove_clients):
