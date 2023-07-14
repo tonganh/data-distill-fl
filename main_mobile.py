@@ -62,7 +62,7 @@ class MyLogger(flw.Logger):
         path_as_task = 'results_mobile/{}'.format(server.option['task'])
         if not os.path.exists(path_as_task):
             os.mkdir(path_as_task)
-        path_as_freq = '{}/edge_freq_{}'.format(path_as_task,server.option['edge_update_frequency'])
+        path_as_freq = '{}/edge_freq_{}_remove_{}'.format(path_as_task,server.option['edge_update_frequency'], server.option['remove_client'])
         if not os.path.exists(path_as_freq):
             os.mkdir(path_as_freq)
 

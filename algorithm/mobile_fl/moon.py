@@ -4,7 +4,7 @@ import torch
 from utils import fmodule
 import sys
 sys.path.append('..')
-from .fedbase_mobile  import BasicCloudServer, BasicEdgeServer, BasicMobileClient
+from .fedbase_mobile_delete_clients  import BasicCloudServer, BasicEdgeServer, BasicMobileClient
 from benchmark.toolkits import XYDataset
 import copy
 import math
@@ -67,9 +67,10 @@ class CloudServer(BasicCloudServer):
 
         num_iterations_start_remove = 50
         num_clients_removed = 2
-        after_num_itr_remove = 2
-        if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
-            self.delete_clients(num_clients_removed)
+        after_num_itr_remove = 5
+        if self.option['remove_client'] == 1:
+            if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
+                self.delete_clients(num_clients_removed)
 
         # sample clients: MD sampling as default but with replacement=False
         # print("Iterating")

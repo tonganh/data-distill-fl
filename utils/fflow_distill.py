@@ -86,6 +86,7 @@ def read_option():
     parser.add_argument('--distill_iters', help='Number of data distillation iterations', type=int,default=300)
     parser.add_argument('--distill_before_train', help='Choose to distill before training or not', type=bool,default=False)
     parser.add_argument('--kip_support_size', help='Size of distill dataset if using KIP', type=int,default=50)
+    parser.add_argument('--remove_client', help='Setting remove client with setting', type=int, default=0)
 
 
     try: option = vars(parser.parse_args())

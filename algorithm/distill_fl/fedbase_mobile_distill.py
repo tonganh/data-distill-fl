@@ -86,6 +86,12 @@ class BasicCloudServer(BasicServer):
         self.client_valid_metrics = []
 
 
+    def get_model_size(self, model):
+        num_params = sum(p.numel() for p in model.parameters())
+        # Mỗi tham số là một số thực dấu chấm động 32 bit, tức là 4 byte
+        num_bytes = num_params * 4
+        return num_bytes
+        
     def distill(self):
         print("First, distill data from clients' side")
         for client in self.clients:
@@ -196,7 +202,6 @@ class BasicCloudServer(BasicServer):
                     if client_name not in clients_names and client_name not in self.deleted_clients_name:
                         self.clients.append(client)
                         clients_names.append(client_name)
-                        print(f'Line 175 - {len(self.clients)}')
                     # client.location = client
             else:
                 clients_to_readd = self.unused_clients_queue
@@ -206,7 +211,6 @@ class BasicCloudServer(BasicServer):
                     if client_name not in clients_names and client_name not in self.deleted_clients_name:
                         self.clients.append(client)
                         clients_names.append(client_name)
-                        print(f'Line 208 - {len(self.clients)}')
                         
         if len(self.clients) > 100:
             import pdb; pdb.set_trace()
