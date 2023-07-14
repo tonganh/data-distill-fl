@@ -6,6 +6,7 @@ import torch
 import os
 import multiprocessing
 import pandas as pd
+import json
 
 class MyLogger(flw.Logger):
     def log(self, server=None):
@@ -63,13 +64,22 @@ class MyLogger(flw.Logger):
             os.mkdir('results_distill/{}'.format(server.option['task']))
 
 
-        path_save_data = 'results_distill/{}/ipc_{}_velocity_{}'.format(server.option['task'],
-                                                                                server.option['distill_ipc'], server.option['mean_velocity'])
+        path_save_data = 'results_distill/{}/remove_{}_ipc_{}_velocity_{}_edge_freq_{}'.format(
+                                                                                server.option['remove_client'],
+                                                                                server.option['task'],
+                                                                                server.option['distill_ipc'], 
+                                                                                server.option['mean_velocity'],
+                                                                                server.option['edge_update_frequency'])
+        
         if not os.path.exists(path_save_data):
             os.mkdir(path_save_data)
+    
+        process_option_setting_path_save = f'{path_save_data}/setting.json'
+        with open(process_option_setting_path_save, 'w') as file:
+            json.dump(server.option, file)
+
 
         test_results_path = '{}/test_results.csv'.format(path_save_data)
-    
         
         experiment_df = pd.DataFrame(columns=['round','test_acc','test_loss','train_loss','val_loss','train_acc', 'val_acc','total_transfer_size'])
         experiment_df['round'] = [i for i in range(len(self.output['test_accs']))]

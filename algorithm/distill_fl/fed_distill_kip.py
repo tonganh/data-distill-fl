@@ -31,6 +31,7 @@ class CloudServer(BasicCloudServer):
         self.avg_edge_total_transfer_size = []
         self.edge_metrics = {}
 
+
     def iterate(self, t):
         """
         The standard iteration of each federated round that contains three
@@ -45,8 +46,9 @@ class CloudServer(BasicCloudServer):
         num_iterations_start_remove = 50
         num_clients_removed = 2
         after_num_itr_remove = 5
-        if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
-            self.delete_clients(num_clients_removed)
+        if self.option['remove_client'] == 1:
+            if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
+                self.delete_clients(num_clients_removed)
 
         # sample clients: MD sampling as default but with replacement=False
         # print("Iterating")
@@ -78,7 +80,6 @@ class CloudServer(BasicCloudServer):
         
         
         models, (edge_names, train_losses, valid_losses, train_acc, valid_acc) = self.communicate(self.edges)
-        
         all_edge_train_losses = []
         all_edge_valid_losses = []
         all_edge_train_metrics = []
@@ -99,12 +100,6 @@ class CloudServer(BasicCloudServer):
             all_edge_valid_losses.append(edge_valid_loss)
             all_edge_train_metrics.append(edge_train_acc)
             all_edge_valid_metrics.append(edge_valid_acc)
-        
-        self.avg_edge_train_losses.append(sum(all_edge_train_losses) / len(all_edge_train_losses))
-        self.avg_edge_valid_losses.append(sum(all_edge_valid_losses) / len(all_edge_valid_losses))
-        self.avg_edge_train_metrics.append(sum(all_edge_train_metrics) / len(all_edge_train_metrics))
-        self.avg_edge_valid_metrics.append(sum(all_edge_valid_metrics) / len(all_edge_valid_metrics))
-        self.avg_edge_total_transfer_size.append(sum(all_total_transfer_size))
 
         
             # else:
@@ -118,12 +113,24 @@ class CloudServer(BasicCloudServer):
         # models = [edge.model for edge in self.edges]
         if t % self.edge_update_frequency == 0:
             models = [edge.model for edge in self.edges]
+
+            total_size_edge_1side_cloud = sum(self.get_model_size(model) for model in models)
+            # !nhân 2 vì có cả chiều đi và chiều về
+            communication_cost_edge_cloud = total_size_edge_1side_cloud *2
+            all_total_transfer_size.append(communication_cost_edge_cloud)
+
             sum_datavol = sum([edge.datavol for edge in self.edges])
             edge_weights = [edge.datavol / sum_datavol for edge in self.edges]
             self.model = self.aggregate(models, p = edge_weights)
 
             for edge in self.edges:
                 edge.model = copy.deepcopy(self.model)
+
+        self.avg_edge_train_losses.append(sum(all_edge_train_losses) / len(all_edge_train_losses))
+        self.avg_edge_valid_losses.append(sum(all_edge_valid_losses) / len(all_edge_valid_losses))
+        self.avg_edge_train_metrics.append(sum(all_edge_train_metrics) / len(all_edge_train_metrics))
+        self.avg_edge_valid_metrics.append(sum(all_edge_valid_metrics) / len(all_edge_valid_metrics))
+        self.avg_edge_total_transfer_size.append(sum(all_total_transfer_size))
 
 
     def sample(self):

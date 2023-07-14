@@ -4,7 +4,7 @@ import torch
 from utils import fmodule
 import sys
 sys.path.append('..')
-from .fedbase_mobile  import BasicCloudServer, BasicEdgeServer, BasicMobileClient
+from .fedbase_mobile_delete_clients  import BasicCloudServer, BasicEdgeServer, BasicMobileClient
 from benchmark.toolkits import XYDataset
 import copy
 import math
@@ -17,6 +17,7 @@ from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
 from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
 import torch.nn as nn
+from torchsummary import summary
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,clients,test_data = None):

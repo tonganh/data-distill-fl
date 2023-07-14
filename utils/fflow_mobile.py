@@ -96,6 +96,11 @@ def read_option():
 
     parser.add_argument('--global_ensemble_weights', help='Ensemble weights of the global model', type=float, default=0.1)
 
+    # Delete client after each round
+    # 0 is not delete, 1 is delete
+    parser.add_argument('--remove_client', help='Setting remove client with setting', type=int, default=0)
+
+
     try: option = vars(parser.parse_args())
     except IOError as msg: parser.error(str(msg))
     return option
