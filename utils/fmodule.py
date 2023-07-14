@@ -231,10 +231,12 @@ def _model_cossim(m1, m2):
         l2 = torch.tensor(0.).to(m1.device)
         for n1, n2 in zip(ml1, ml2):
             res += _modeldict_dot(n1._parameters, n2._parameters)
+            print(res)
             for l in n1._parameters.keys():
                 l1 += torch.sum(torch.pow(n1._parameters[l], 2))
                 l2 += torch.sum(torch.pow(n2._parameters[l], 2))
-        return (res / torch.pow(l1, 0.5) * torch(l2, 0.5))
+                print(l1,l2)
+        return (res / torch.pow(l1, 0.5) * torch(l2, 0.5) + 1e-6)
     else:
         return _modeldict_cossim(m1.state_dict(), m2.state_dict())
 
@@ -365,12 +367,16 @@ def _modeldict_cossim(md1, md2):
     res = torch.tensor(0.).to(md1[list(md1)[0]].device)
     l1 = torch.tensor(0.).to(md1[list(md1)[0]].device)
     l2 = torch.tensor(0.).to(md1[list(md1)[0]].device)
+    print(md1)
+    print(md1.keys())
     for layer in md1.keys():
         if md1[layer] is None or md1[layer].requires_grad==False:
             continue
         res += (md1[layer].view(-1).dot(md2[layer].view(-1)))
         l1 += torch.sum(torch.pow(md1[layer], 2))
         l2 += torch.sum(torch.pow(md2[layer], 2))
+        print('layers: ',res,l1,l2)
+
     return res/(torch.pow(l1, 0.5)*torch.pow(l2, 0.5))
 
 def _modeldict_element_wise(md, func):

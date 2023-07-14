@@ -15,7 +15,7 @@ from main_mobile import logger
 import os
 from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
-from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data, SoftTargetDistillLoss
+from .mobile_fl_utils import NTD_Loss, model_weight_divergence, kl_divergence, calculate_kl_div_from_data, SoftTargetDistillLoss
 import torch.nn as nn
 
 
@@ -54,44 +54,28 @@ class CloudServer(BasicCloudServer):
         :param
             t: the number of current round
         """
-        # First, distill all data on clients' side
-        # for client in self.clients:
-        #     client.distill_data()
-
-
-        # sample clients: MD sampling as default but with replacement=False
-        # print("Iterating")
-        self.global_update_location()
-        # print("Done updating location")
-        self.update_client_list()
-        # print("Done updating client_list")
-        self.assign_client_to_server()
-        # print("Done assigning client to sercer")
 
         self.selected_clients = self.clients
-        # print("Selected clients", [client.name for client in self.selected_clients])
 
-        # first, aggregate the edges with their clientss
-        # for client in self.selected_clients:
-        #     client.print_client_info()
         all_client_train_losses = []
         all_client_valid_losses = []
         all_client_train_metrics = []
         all_client_valid_metrics = []
 
-        for edge in self.edges:
+        trained_clients = []
 
-            # print(f"Edge: {edge.name} - clients {self.client_edge_mapping[edge.name]}" )
+        for edge in self.edges:
+            np.random.seed(self.option['seed'] +21)
+
             clients_chosen_in_edge =     list(np.random.choice(self.client_edge_mapping[edge.name],
                                                                int(len(self.client_edge_mapping[edge.name]) * self.option['proportion']), replace=False))
-
-            # print(f"Edge: {edge.name} - clients {clients_chosen_in_edge}" )
-
 
             aggregated_clients = []
             for client in self.selected_clients:
                 if client.name in clients_chosen_in_edge:
                     aggregated_clients.append(client)
+                    trained_clients.append(client)
+
             if len(aggregated_clients) > 0:
                 # print(aggregated_clients)
                 # print(edge.communicate(aggregated_clients))
@@ -101,11 +85,13 @@ class CloudServer(BasicCloudServer):
                                              agg_clients_train_accs, 
                                              agg_clients_valid_accs)= edge.communicate(aggregated_clients,global_model )
                 
-                edge_total_datavol = sum([client.datavol for client in aggregated_clients])
-                edge.total_datavol = edge_total_datavol
-                aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
-                # print(len(aggregation_weights), len(aggregated_clients_models))
-                edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
+                # edge_total_datavol = sum([client.datavol for client in aggregated_clients])
+                # edge.total_datavol = edge_total_datavol
+                # aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
+                # # print(len(aggregation_weights), len(aggregated_clients_models))
+                # edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
+                # edge.add_model_to_buffer()
+                # edge.get_ensemble_model()
 
                 all_client_train_losses.extend(agg_clients_train_losses)
                 all_client_valid_losses.extend(agg_clients_valid_losses)
@@ -117,11 +103,29 @@ class CloudServer(BasicCloudServer):
         self.client_train_metrics.append(sum(all_client_train_metrics) / len(all_client_train_metrics))
         self.client_valid_metrics.append(sum(all_client_valid_metrics) / len(all_client_valid_metrics))
 
-            # else:
-            #     print('No aggregated clients')
-        # models, train_losses = self.communicate(self.edges)
+        self.global_update_location()
+        self.update_client_list()
+        self.assign_client_to_server()
 
-        # print("Done a training step")
+        for edge in self.edges:
+
+            aggregated_clients = []
+            for client in self.selected_clients:
+                if client.name in self.client_edge_mapping[edge.name]:
+                    if client in trained_clients:
+                        # print(edge.name,client.name)
+                        aggregated_clients.append(client)
+    
+            if len(aggregated_clients) > 0:
+                # print('Chosen')
+                aggregated_clients_models = [client.model for client in aggregated_clients]
+                edge_total_datavol = sum([client.datavol for client in aggregated_clients])
+                edge.total_datavol = edge_total_datavol
+                aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
+                edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
+                edge.add_model_to_buffer()
+                edge.get_ensemble_model()
+
         # check whether all the clients have dropped out, because the dropped clients will be deleted from self.selected_clients
         if not self.selected_clients: return
         # aggregate: pk = 1/K as default where K=len(selected_clients)
@@ -134,15 +138,13 @@ class CloudServer(BasicCloudServer):
 
             for edge in self.edges:
                 edge.model = copy.deepcopy(self.model)
+                edge.reset_buffer()
 
         edges_models_list = []
         for edge in self.edges:
                 edges_models_list.append(copy.deepcopy(edge.model))
      
         
-
-
-
 
 
     def communicate(self, edges):
@@ -280,94 +282,13 @@ class CloudServer(BasicCloudServer):
         self.initialize_clients_location_velocity()
 
 
-    # def sample_data_with_replacement(self, num_clients):
-    #     client_data_lists = []
-    #     training_size = self.x_train.shape[0]
-    #     for i in range(num_clients):
-    #         chosen_indices = random.sample([idx for idx in range(training_size)], self.num_data_samples_per_client)
-    #         client_X = self.x_train[chosen_indices]
-    #         client_Y = self.y_train[chosen_indices]
-
-    #         client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(client_X, client_Y, 
-    #                                                                                           test_size = self.option['client_valid_ratio'],
-    #                                                                                           random_state=self.option['seed'])
-    #         # print(client_X_train)
-    #         client_train_dataset = XYDataset(client_X_train, client_Y_train)
-    #         client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
-    #         # print(client_X_train.shape, client_X_valid.shape, client_Y_train.shape, client_Y_valid.shape)
-
-    #         client_data_lists.append( (client_train_dataset, client_valid_dataset) )
-        
-    #     return client_data_lists
-
-
-    # def sample_data_without_replacement(self, num_clients):
-    #     client_data_lists = []
-    #     training_size = self.x_train.shape[0]
-    #     # print("X train", self.x_train.shape)
-    #     if self.option['non_iid_classes'] == 0:
-    #         client_indices_split = np.split(np.array([idx for idx in range(training_size)]), num_clients)
-    #         for i in range(num_clients):
-    #             chosen_indices = client_indices_split[i]
-    #             client_X = self.x_train[chosen_indices]
-    #             client_Y = self.y_train[chosen_indices]
-    #             # print(client_X.shape,client_Y.shape)
-
-    #             client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(client_X, client_Y, 
-    #                                                                                             test_size = self.option['client_valid_ratio'])
-    #             # print("Client X train",client_X_train)
-
-    #             client_train_dataset = XYDataset(client_X_train, client_Y_train)
-    #             client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
-    #             # print(client_X_train.shape, client_X_valid.shape, client_Y_train.shape, client_Y_valid.shape)
-
-    #             client_data_lists.append( (client_train_dataset, client_valid_dataset) )
-        
-    #     else:
-    #         non_iid_data_lists = []
-    #         all_classes = list(np.unique(self.y_train))
-    #         num_classes = len(all_classes)
-    #         # print(all_classes, num_classes)
-    #         num_partitions_per_class = num_clients // num_classes
-    #         partition_size = self.x_train.shape[0] // num_clients
-    #         print("Number of partitions per class", num_partitions_per_class)
-    #         print("partition size", partition_size)
-    #         # print(self.y_train.shape)
-    #         for label in all_classes:
-    #             label_indices = np.argwhere(self.y_train == label)
-    #             x_train_label = self.x_train[label_indices].squeeze(0)
-    #             y_train_label = self.y_train[label_indices]
-    #             y_train_label = y_train_label.squeeze(0)
-    #             print(x_train_label.shape, y_train_label.shape)
-    #             for i in range(num_partitions_per_class):
-    #                 x_train_label_partition = x_train_label[partition_size * i: partition_size * (i+1)]
-    #                 y_train_label_partition = y_train_label[partition_size * i: partition_size * (i+1)]
-    #                 print("partition shape: ", x_train_label_partition.shape, y_train_label_partition.shape)
-    #                 client_X_train, client_X_valid, client_Y_train, client_Y_valid = train_test_split(x_train_label_partition, y_train_label_partition, 
-    #                                                                                                 test_size = self.option['client_valid_ratio'])
-
-    #                 # print(client_X_train.shape, client_Y_train.shape, client_X_valid.shape)
-    #                 client_train_dataset = XYDataset(client_X_train, client_Y_train)
-    #                 client_valid_dataset = XYDataset(client_X_valid, client_Y_valid)
-    #                 non_iid_data_lists.append( (client_train_dataset, client_valid_dataset) )
-    #         client_data_lists = non_iid_data_lists
-
-    #                 # print(y_train_label_partition, x_train_label_partition, x_train_label_partition.shape)
-    #             # print(x_train_label[0:10], y_train_label[0:10]
-    #         # print(np.unique(self.y_train))
-
-        
-    #     return client_data_lists
-        
-        # print(self.client_edge_mapping)
-
-
-
-
 class EdgeServer(BasicEdgeServer):
     def __init__(self, option,model,cover_area, name = '', clients = [], test_data=None):
         super(EdgeServer, self).__init__(option,model,cover_area, name , clients , test_data)
         self.clients = []
+        self.model_buffer = []
+        self.max_buffer_size = option['edge_model_buffer_size'] 
+        self.ensemble_model = None
 
     def update_client_list(self,clients):
         self.clients = clients
@@ -382,6 +303,19 @@ class EdgeServer(BasicEdgeServer):
         edge_data = torch.cat(all_edge_data,0)
         # print(edge_data.shape)
         return edge_data
+    
+    def add_model_to_buffer(self):
+        self.model_buffer.append(self.model)
+        
+        if len(self.model_buffer) > self.max_buffer_size:
+            self.model_buffer = self.model_buffer[-self.max_buffer_size:]
+    
+    def reset_buffer(self):
+        self.model_buffer = []
+
+    def get_ensemble_model(self):
+        # print(len(self.model_buffer))
+        self.ensemble_model = fmodule._model_average(self.model_buffer)
     
 
     # def get_client_distribution()
@@ -442,6 +376,7 @@ class EdgeServer(BasicEdgeServer):
         """
         return {
             "edge_model" : copy.deepcopy(self.model),
+            'edge_ensemble_model': copy.deepcopy(self.ensemble_model),
             "global_model" : copy.deepcopy(global_model),
         }
 
@@ -456,32 +391,6 @@ class EdgeServer(BasicEdgeServer):
         # unpack the received package
         return received_pkg['model']
 
-    # def reply(self, svr_pkg):
-    #     """
-    #     Reply to server with the transmitted package.
-    #     The whole local procedure should be planned here.
-    #     The standard form consists of three procedure:
-    #     unpacking the server_package to obtain the global model,
-    #     training the global model, and finally packing the improved
-    #     model into client_package.
-    #     :param
-    #         svr_pkg: the package received from the server
-    #     :return:
-    #         client_pkg: the package to be send to the server
-    #     """
-    #     # print("In reply function of client")
-    #     # print(svr_pkg)
-    #     model = self.unpack_svr(svr_pkg)
-    #     # print("CLient unpacked to package")
-    #     # loss = self.train_loss(model)
-    #     loss = 0
-    #     print("Client evaluated the train losss")
-    #     self.train(model)
-    #     print("Client trained the model")
-    #     cpkg = self.pack(model, loss)
-    #     # print("Client packed and finished")
-    #     return cpkg
-
 
 class MobileClient(BasicMobileClient):
     def __init__(self, option, location = 0,  velocity = 0, name='', train_data=None, valid_data=None):
@@ -493,9 +402,17 @@ class MobileClient(BasicMobileClient):
         self.model = None
 
         # self.distill_loss = SoftTargetDistillLoss(self.T)
-        self.distill_loss = nn.MSELoss()
+
+        if 'cifar100' in option['task']:
+            num_classes = 100
+        else:
+            num_classes = 10
         self.alpha = option['distill_alpha']
         self.option = option
+        self.distill_loss = NTD_Loss(num_classes=num_classes, tau = self.T)
+
+
+        self.global_beta = option['distill_global_beta']
 
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
@@ -510,7 +427,7 @@ class MobileClient(BasicMobileClient):
             the unpacked information that can be rewritten
         """
         # unpack the received package
-        return received_pkg['edge_model'], received_pkg['global_model']
+        return received_pkg['edge_model'],  received_pkg['edge_ensemble_model'], received_pkg['global_model']
 
     def reply(self, svr_pkg):
         """
@@ -526,7 +443,7 @@ class MobileClient(BasicMobileClient):
             client_pkg: the package to be send to the server
         """
         # print("In reply function of client")
-        edge_model, global_model = self.unpack(svr_pkg)
+        edge_model, edge_ensemble_model, global_model = self.unpack(svr_pkg)
         # print("CLient unpacked to package")
         train_loss = self.train_loss(edge_model)
         valid_loss = self.valid_loss(edge_model)
@@ -534,50 +451,56 @@ class MobileClient(BasicMobileClient):
         valid_acc = self.valid_metrics(edge_model)
 
         # print("Client evaluated the train losss")
-        model = self.train(edge_model,global_model)
+        self.train(edge_model,edge_ensemble_model, global_model)
         # print("Client trained the model")
         eval_dict = {'train_loss': train_loss, 
                       'valid_loss': valid_loss,
                       'train_acc':train_acc,
                       'valid_acc': valid_acc}
-        cpkg = self.pack(model, eval_dict)
+        cpkg = self.pack(edge_model, eval_dict)
         # print("Client packed and finished")
         return cpkg
 
-    def train(self, edge_model, global_model):
+    def train(self, edge_model, edge_ensemble_model, global_model):
+        # print(device)
         # global parameters
-        # model = fmodule._model_average([copy.deepcopy(global_model), copy.deepcopy(edge_model)],
-        #                                 p = [self.option['global_ensemble_weights'], 1- self.option['global_ensemble_weights']])
-        # model = fmodule._model_average([copy.deepcopy(global_model), copy.deepcopy(edge_model)],
-        #                                 p = [1,0])
+        edge_teacher = copy.deepcopy(edge_ensemble_model)
+        global_teacher = copy.deepcopy(global_model)
+        if edge_teacher != None:
+            edge_teacher.freeze_grad()
+        if global_teacher != None:
+            global_teacher.freeze_grad()
 
-        for p in global_model.parameters():
-            p.requires_grad = False
+        edge_model.train()
 
-        for p in edge_model.parameters():
-            p.requires_grad = False
-
-        # model = fmodule._model_average([copy.deepcopy(global_model), copy.deepcopy(edge_model)],
-        #                                 p = [self.option['global_ensemble_weights'], 1- self.option['global_ensemble_weights']])
-
-        sd_global = global_model.state_dict()
-        sd_edge = edge_model.state_dict()
-
-        # Average all parameters
-        for key in sd_global:
-            sd_edge[key] = (self.option['global_ensemble_weights']*sd_global[key] + (1-self.option['global_ensemble_weights'])*sd_edge[key])
-
-        model = fmodule._model_average([copy.deepcopy(global_model), copy.deepcopy(edge_model)],
-                                        p = [1.4, 0.2])
-        model.load_state_dict(sd_edge)
-
-        model.train()
         data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
-        optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr = self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+        optimizer = self.calculator.get_optimizer(self.optimizer_name, edge_model, lr=self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
         for iter in range(self.epochs):
-            for batch_id, batch_data in enumerate(data_loader):
-                model.zero_grad()
-                loss = self.calculator.get_loss(model, batch_data)
+            for batch_idx, batch_data in enumerate(data_loader):
+                optimizer.zero_grad()
+
+                if edge_teacher != None and global_teacher != None:
+                    tdata = self.calculator.data_to_device(batch_data)
+                    input, target = tdata[0], tdata[1].type(torch.LongTensor)
+                    target = target.to(input.device)
+                    output_local_model = edge_model(input)
+
+                    with torch.no_grad():
+                        output_edge_model = edge_teacher(input)
+                        output_global_model = global_teacher(input)
+
+                    distill_loss = ( (1-self.global_beta) * self.distill_loss(output_local_model, output_edge_model, target) \
+                                    +self.global_beta * self.distill_loss(output_local_model, output_global_model, target)) 
+                    original_loss = self.calculator.get_loss(edge_model, batch_data)
+                    loss = self.alpha * distill_loss +  original_loss
+                
+                else:
+                    loss = self.calculator.get_loss(edge_model, batch_data)
+
                 loss.backward()
                 optimizer.step()
-        return model
+
+        self.model = copy.deepcopy(edge_model)
+
+        return
+        

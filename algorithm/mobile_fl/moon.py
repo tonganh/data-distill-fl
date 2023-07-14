@@ -24,129 +24,6 @@ class CloudServer(BasicCloudServer):
         self.initialize()
 
 
-    def run(self):
-        """
-        Start the federated learning symtem where the global model is trained iteratively.
-        """
-        logger.time_start('Total Time Cost')
-        for round in range(self.num_rounds+1):
-            print("--------------Round {}--------------".format(round))
-            logger.time_start('Time Cost')
-            # print(self.clients)
-            # federated train
-            self.iterate(round)
-            # decay learning rate
-            self.global_lr_scheduler(round)
-
-            logger.time_end('Time Cost')
-            if logger.check_if_log(round, self.eval_interval): logger.log(self)
-
-        print("=================End==================")
-        logger.time_end('Total Time Cost')
-        # save results as .json file
-        # logger.save(os.path.join('fedtask', self.option['task'], 'record', flw.output_filename(self.option, self)))
-
-    def iterate(self, t):
-        """
-        The standard iteration of each federated round that contains three
-        necessary procedure in FL: client selection, communication and model aggregation.
-        :param
-            t: the number of current round
-        """
-        # First, distill all data on clients' side
-        # for client in self.clients:
-        #     client.distill_data()
-
-        num_iterations_start_remove = 50
-        num_clients_removed = 2
-        after_num_itr_remove = 5
-        if t >= num_iterations_start_remove and t%after_num_itr_remove==0:
-            self.delete_clients(num_clients_removed)
-
-        # sample clients: MD sampling as default but with replacement=False
-        # print("Iterating")
-        self.global_update_location()
-        # print("Done updating location")
-        self.update_client_list()
-        # print("Done updating client_list")
-        self.assign_client_to_server()
-        # print("Done assigning client to sercer")
-
-        # self.selected_clients = self.sample()
-        self.selected_clients = self.clients
-        # print("Selected clients", [client.name for client in self.selected_clients])
-
-        # first, aggregate the edges with their clientss
-        # for client in self.selected_clients:
-        #     client.print_client_info()
-        all_client_train_losses = []
-        all_client_valid_losses = []
-        all_client_train_metrics = []
-        all_client_valid_metrics = []
-
-        for edge in self.edges:
-
-            # print(f"Edge: {edge.name} - clients {self.client_edge_mapping[edge.name]}" )
-            clients_chosen_in_edge =     list(np.random.choice(self.client_edge_mapping[edge.name],
-                                                               int(len(self.client_edge_mapping[edge.name]) * self.option['proportion']), replace=False))
-
-            # print(f"Edge: {edge.name} - clients {clients_chosen_in_edge}" )
-
-
-            aggregated_clients = []
-            for client in self.selected_clients:
-                if client.name in clients_chosen_in_edge:
-                    aggregated_clients.append(client)
-            if len(aggregated_clients) > 0:
-                # print(aggregated_clients)
-                # print(edge.communicate(aggregated_clients))
-                aggregated_clients_models , (agg_clients_train_losses, 
-                                             agg_clients_valid_losses, 
-                                             agg_clients_train_accs, 
-                                             agg_clients_valid_accs)= edge.communicate(aggregated_clients)
-                
-                edge_total_datavol = sum([client.datavol for client in aggregated_clients])
-                edge.total_datavol = edge_total_datavol
-                aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
-                # print(len(aggregation_weights), len(aggregated_clients_models))
-                edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
-
-                all_client_train_losses.extend(agg_clients_train_losses)
-                all_client_valid_losses.extend(agg_clients_valid_losses)
-                all_client_train_metrics.extend(agg_clients_train_accs)
-                all_client_valid_metrics.extend(agg_clients_valid_accs)
-        
-        self.client_train_losses.append(sum(all_client_train_losses) / len(all_client_train_losses))
-        self.client_valid_losses.append(sum(all_client_valid_losses) / len(all_client_valid_losses))
-        self.client_train_metrics.append(sum(all_client_train_metrics) / len(all_client_train_metrics))
-        self.client_valid_metrics.append(sum(all_client_valid_metrics) / len(all_client_valid_metrics))
-
-            # else:
-            #     print('No aggregated clients')
-        # models, train_losses = self.communicate(self.edges)
-
-        # print("Done a training step")
-        # check whether all the clients have dropped out, because the dropped clients will be deleted from self.selected_clients
-        if not self.selected_clients: return
-        # aggregate: pk = 1/K as default where K=len(selected_clients)
-        # models = [edge.model for edge in self.edges]
-        if t % self.edge_update_frequency == 0:
-            models = [edge.model for edge in self.edges]
-            sum_datavol = sum([edge.total_datavol for edge in self.edges])
-            edge_weights = [edge.total_datavol / sum_datavol for edge in self.edges]
-            self.model = self.aggregate(models, p = edge_weights)
-
-            for edge in self.edges:
-                edge.model = copy.deepcopy(self.model)
-
-        edges_models_list = []
-        for edge in self.edges:
-                edges_models_list.append(copy.deepcopy(edge.model))
-     
-
-
-
-
 
     def communicate(self, edges):
         """
@@ -559,6 +436,8 @@ class MobileClient(BasicMobileClient):
                 # backward pass
                 loss.backward()
                 optimizer.step()
+        self.model = copy.deepcopy(model)
+        return model
 
 
         return 

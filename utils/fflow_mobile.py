@@ -10,7 +10,7 @@ import ujson
 import time
 import torch.nn as nn
 sample_list=['uniform', 'md', 'active']
-agg_list=['uniform', 'weighted_scale', 'weighted_com', 'none']
+agg_list=['uniform', 'weighted_scale', 'weighted_com','model_sim', 'none']
 optimizer_list=['SGD', 'Adam']
 
 def read_option():

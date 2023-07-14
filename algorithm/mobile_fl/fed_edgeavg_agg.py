@@ -15,134 +15,13 @@ from main_mobile import logger
 import os
 from tqdm import tqdm
 from multiprocessing import Pool as ThreadPool
-from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data, SoftTargetDistillLoss
+from .mobile_fl_utils import model_weight_divergence, kl_divergence, calculate_kl_div_from_data
 
 class CloudServer(BasicCloudServer):
     def __init__(self, option, model ,clients,test_data = None):
         super(CloudServer, self).__init__( option, model,clients,test_data )
-        self.initialize()
-
-
-    def run(self):
-        """
-        Start the federated learning symtem where the global model is trained iteratively.
-        """
-        logger.time_start('Total Time Cost')
-        for round in range(self.num_rounds+1):
-            print("--------------Round {}--------------".format(round))
-            logger.time_start('Time Cost')
-            # print(self.clients)
-            # federated train
-            self.iterate(round)
-            # decay learning rate
-            self.global_lr_scheduler(round)
-
-            logger.time_end('Time Cost')
-            if logger.check_if_log(round, self.eval_interval): logger.log(self)
-
-        print("=================End==================")
-        logger.time_end('Total Time Cost')
-        # save results as .json file
-        # logger.save(os.path.join('fedtask', self.option['task'], 'record', flw.output_filename(self.option, self)))
-
-    def iterate(self, t):
-        """
-        The standard iteration of each federated round that contains three
-        necessary procedure in FL: client selection, communication and model aggregation.
-        :param
-            t: the number of current round
-        """
-        # First, distill all data on clients' side
-        # for client in self.clients:
-        #     client.distill_data()
-
-
-        # sample clients: MD sampling as default but with replacement=False
-        # print("Iterating")
-        self.global_update_location()
-        # print("Done updating location")
-        self.update_client_list()
-        # print("Done updating client_list")
-        self.assign_client_to_server()
-        # print("Done assigning client to sercer")
-
-        self.selected_clients = self.clients
-        # print("Selected clients", [client.name for client in self.selected_clients])
-
-        # first, aggregate the edges with their clientss
-        # for client in self.selected_clients:
-        #     client.print_client_info()
-        all_client_train_losses = []
-        all_client_valid_losses = []
-        all_client_train_metrics = []
-        all_client_valid_metrics = []
-
-        for edge in self.edges:
-            edge.previous_model = copy.deepcopy(edge.model)
-            # print(f"Edge: {edge.name} - clients {self.client_edge_mapping[edge.name]}" )
-            clients_chosen_in_edge =     list(np.random.choice(self.client_edge_mapping[edge.name],
-                                                               int(len(self.client_edge_mapping[edge.name]) * self.option['proportion']), replace=False))
-
-            # print(f"Edge: {edge.name} - clients {clients_chosen_in_edge}" )
-
-
-            aggregated_clients = []
-            for client in self.selected_clients:
-                if client.name in clients_chosen_in_edge:
-                    aggregated_clients.append(client)
-            if len(aggregated_clients) > 0:
-                # print(aggregated_clients)
-                # print(edge.communicate(aggregated_clients))
-                global_model  =copy.deepcopy(self.model)
-                aggregated_clients_models , (agg_clients_train_losses, 
-                                             agg_clients_valid_losses, 
-                                             agg_clients_train_accs, 
-                                             agg_clients_valid_accs)= edge.communicate(aggregated_clients)
-                
-                edge_total_datavol = sum([client.datavol for client in aggregated_clients])
-                edge.total_datavol = edge_total_datavol
-                aggregation_weights = [client.datavol / edge_total_datavol for client in aggregated_clients]
-                # print(len(aggregation_weights), len(aggregated_clients_models))
-                edge.model =  self.aggregate(aggregated_clients_models, p = aggregation_weights)
-
-                all_client_train_losses.extend(agg_clients_train_losses)
-                all_client_valid_losses.extend(agg_clients_valid_losses)
-                all_client_train_metrics.extend(agg_clients_train_accs)
-                all_client_valid_metrics.extend(agg_clients_valid_accs)
+        self.initialize()    
         
-        self.client_train_losses.append(sum(all_client_train_losses) / len(all_client_train_losses))
-        self.client_valid_losses.append(sum(all_client_valid_losses) / len(all_client_valid_losses))
-        self.client_train_metrics.append(sum(all_client_train_metrics) / len(all_client_train_metrics))
-        self.client_valid_metrics.append(sum(all_client_valid_metrics) / len(all_client_valid_metrics))
-
-            # else:
-            #     print('No aggregated clients')
-        # models, train_losses = self.communicate(self.edges)
-
-        # print("Done a training step")
-        # check whether all the clients have dropped out, because the dropped clients will be deleted from self.selected_clients
-        if not self.selected_clients: return
-        # aggregate: pk = 1/K as default where K=len(selected_clients)
-        # models = [edge.model for edge in self.edges]
-        if t % self.edge_update_frequency == 0:
-            models = [edge.model for edge in self.edges]
-            sum_datavol = sum([edge.total_datavol for edge in self.edges])
-            edge_weights = [edge.total_datavol / sum_datavol for edge in self.edges]
-            self.model = self.aggregate(models, p = edge_weights)
-
-            for edge in self.edges:
-                edge.model = copy.deepcopy(self.model)
-                edge.previous_model = copy.deepcopy(self.model)
-
-        edges_models_list = []
-        for edge in self.edges:
-                edges_models_list.append(copy.deepcopy(edge.model))
-     
-        
-
-
-
-
 
     def communicate(self, edges):
         """
@@ -200,36 +79,42 @@ class CloudServer(BasicCloudServer):
             "model" : copy.deepcopy(self.model),
         }
 
-    def sample(self):
-        """Sample the clients.
-        :param
-            replacement: sample with replacement or not
-        :return
-            a list of the ids of the selected clients
-        """
-        # print("Sampling selected clients")
-        all_clients = [cid for cid in range(self.num_clients)]
-        # print("Done all clients")
-        selected_clients = []
-        # collect all the active clients at this round and wait for at least one client is active and
-        active_clients = []
-        active_clients = self.clients
-        # while(len(active_clients)<1):
-        #     active_clients = [cid for cid in range(self.num_clients) if self.clients[cid].is_active()]
-        # print("DOne collect all the active clients")
-        # sample clients
-        if self.sample_option == 'active':
-            # select all the active clients without sampling
-            selected_clients = active_clients
-        if self.sample_option == 'uniform':
-            # original sample proposed by fedavg
-            selected_clients = list(np.random.choice(active_clients, self.clients_per_round, replace=False))
-        elif self.sample_option =='md':
-            # the default setting that is introduced by FedProx
-            selected_clients = list(np.random.choice(all_clients, self.clients_per_round, replace=True, p=[nk / self.data_vol for nk in self.client_vols]))
-        # drop the selected but inactive clients
-        selected_clients = list(set(active_clients).intersection(selected_clients))
-        return selected_clients
+    # def sample(self):
+    #     """Sample the clients.
+    #     :param
+    #         replacement: sample with replacement or not
+    #     :return
+    #         a list of the ids of the selected clients
+    #     """
+    #     # print("Sampling selected clients")
+    #     all_clients = [cid for cid in range(self.num_clients)]
+
+    #     # print("Done all clients")
+    #     selected_clients = []
+    #     # collect all the active clients at this round and wait for at least one client is active and
+    #     active_clients = []
+    #     active_clients = self.clients
+    #     self.clients_per_round =  max(int(self.num_clients * self.option['proportion']), 1)
+
+    #     # while(len(active_clients)<1):
+    #     #     active_clients = [cid for cid in range(self.num_clients) if self.clients[cid].is_active()]
+    #     # print("DOne collect all the active clients")
+    #     # sample clients
+    #     if self.sample_option == 'active':
+    #         # select all the active clients without sampling
+    #         selected_clients = active_clients
+    #     if self.sample_option == 'uniform':
+    #         # original sample proposed by fedavg
+    #         # print(self.clients_per_round)
+    #         # print(len(self.clients))
+    #         selected_clients = list(np.random.choice(active_clients,self.clients_per_round, replace=False))
+
+    #     elif self.sample_option =='md':
+    #         # the default setting that is introduced by FedProx
+    #         selected_clients = list(np.random.choice(all_clients, self.clients_per_round, replace=True, p=[nk / self.data_vol for nk in self.client_vols]))
+    #     # drop the selected but inactive clients
+    #     selected_clients = list(set(active_clients).intersection(selected_clients))
+    #     return selected_clients
 
 
 
@@ -367,7 +252,7 @@ class EdgeServer(BasicEdgeServer):
     def __init__(self, option,model,cover_area, name = '', clients = [], test_data=None):
         super(EdgeServer, self).__init__(option,model,cover_area, name , clients , test_data)
         self.clients = []
-        self.previous_model = None
+        self.agg_option = self.option['aggregate']
 
     def update_client_list(self,clients):
         self.clients = clients
@@ -383,7 +268,6 @@ class EdgeServer(BasicEdgeServer):
         # print(edge_data.shape)
         return edge_data
     
-
     # def get_client_distribution()
 
     def print_edge_info(self):
@@ -441,8 +325,7 @@ class EdgeServer(BasicEdgeServer):
             a dict that only contains the global model as default.
         """
         return {
-            "edge_model" : copy.deepcopy(self.model),
-            "previous_model" : copy.deepcopy(self.previous_model),
+            "model" : copy.deepcopy(self.model),
         }
 
     def unpack_svr(self, received_pkg):
@@ -488,76 +371,8 @@ class MobileClient(BasicMobileClient):
         super(MobileClient, self).__init__(option, location, velocity,  name, train_data, valid_data)
         # self.velocity = velocity
         self.associated_server = None
-        self.mu = option['mu']
-        self.T  = option['distill_temperature']
-        self.model = None
-
-        self.distill_loss = SoftTargetDistillLoss(self.T)
-        self.alpha = option['distill_alpha']
-        self.option = option
-
-
+    
     def print_client_info(self):
         print('Client {} - current loc: {} - velocity: {} - training data size: {}'.format(self.name,self.location,self.velocity,
                                                                                            self.datavol))
-
-    def unpack(self, received_pkg):
-        """
-        Unpack the package received from the server
-        :param
-            received_pkg: a dict contains the global model as default
-        :return:
-            the unpacked information that can be rewritten
-        """
-        # unpack the received package
-        return received_pkg['edge_model'], received_pkg['previous_model']
-
-    def reply(self, svr_pkg):
-        """
-        Reply to server with the transmitted package.
-        The whole local procedure should be planned here.
-        The standard form consists of three procedure:
-        unpacking the server_package to obtain the global model,
-        training the global model, and finally packing the improved
-        model into client_package.
-        :param
-            svr_pkg: the package received from the server
-        :return:
-            client_pkg: the package to be send to the server
-        """
-        # print("In reply function of client")
-        edge_model, previous_model = self.unpack(svr_pkg)
-        # print("CLient unpacked to package")
-        train_loss = self.train_loss(edge_model)
-        valid_loss = self.valid_loss(edge_model)
-        train_acc = self.train_metrics(edge_model)
-        valid_acc = self.valid_metrics(edge_model)
-
-        # print("Client evaluated the train losss")
-        edge_model = self.train(edge_model,previous_model)
-        # print("Client trained the model")
-        eval_dict = {'train_loss': train_loss, 
-                      'valid_loss': valid_loss,
-                      'train_acc':train_acc,
-                      'valid_acc': valid_acc}
-        cpkg = self.pack(edge_model, eval_dict)
-        # print("Client packed and finished")
-        return cpkg
-
-    def train(self, edge_model, previous_model):
-        # global parameters
-        # teacher_model = copy.deepcopy(global_model)
-        # if teacher_model != None:
-        #     teacher_model.freeze_grad()
-        model = fmodule._model_average([copy.deepcopy(previous_model), copy.deepcopy(edge_model)],
-                                        p = [self.option['global_ensemble_weights'], 1- self.option['global_ensemble_weights']])
-        model.train()
-        data_loader = self.calculator.get_data_loader(self.train_data, batch_size=self.batch_size)
-        optimizer = self.calculator.get_optimizer(self.optimizer_name, model, lr = self.learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
-        for iter in range(self.epochs):
-            for batch_id, batch_data in enumerate(data_loader):
-                model.zero_grad()
-                loss = self.calculator.get_loss(model, batch_data)
-                loss.backward()
-                optimizer.step()
-        return model
+    

@@ -5,4 +5,4 @@ python generate_fedtask.py --dataset cifar10 --dist 8 --skew 0.8 --num_clients 1
 #     python generate_fedtask.py --dataset cifar100 --dist 8 --skew 0.8 --num_clients 100
 # python generate_fedtask.py --dataset mnist --dist 7 --skew 0.8 --num_clients 100
 # python generate_fedtask.py --dataset mnist --dist 2 --skew 0.1 --num_clients 100
-# python generate_fedtask.py --dataset cifar10 --dist 2 --skew 0.5 --num_clients 100
+# python generate_fedtask.py --dataset cifar100 --dist 2 --skew 0.1 --num_clients 100
